@@ -128,8 +128,8 @@ type appModel struct {
 	cancelStream context.CancelFunc
 	streaming    bool // an in-progress assistant message is the last element of messages
 
-	promptTokens     int
-	completionTokens int
+	inputTokens  int
+	outputTokens int
 
 	keyInput      textinput.Model
 	keyErr        string
@@ -318,8 +318,8 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case msg.done:
 			m.finishStream()
-			m.promptTokens += msg.usage.PromptTokens
-			m.completionTokens += msg.usage.CompletionTokens
+			m.inputTokens += msg.usage.InputTokens
+			m.outputTokens += msg.usage.OutputTokens
 			return m, nil
 		default:
 			if !m.streaming {
@@ -427,8 +427,8 @@ func (m appModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.keyNotice = ""
 			m.messages = nil
 			m.errText = ""
-			m.promptTokens = 0
-			m.completionTokens = 0
+			m.inputTokens = 0
+			m.outputTokens = 0
 			m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(m.height))
 			m.input.SetValue("")
 			m.layoutChat()
@@ -448,8 +448,8 @@ func (m appModel) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = statePicker
 			m.messages = nil
 			m.errText = ""
-			m.promptTokens = 0
-			m.completionTokens = 0
+			m.inputTokens = 0
+			m.outputTokens = 0
 			m.input.Blur()
 			return m, nil
 		case "enter":
@@ -496,7 +496,7 @@ func (m appModel) sessionCost() float64 {
 	if !ok {
 		return 0
 	}
-	return float64(m.promptTokens)/1e6*r.input + float64(m.completionTokens)/1e6*r.output
+	return float64(m.inputTokens)/1e6*r.input + float64(m.outputTokens)/1e6*r.output
 }
 
 func formatTokens(n int) string {
@@ -509,6 +509,10 @@ func formatTokens(n int) string {
 func (m appModel) View() tea.View {
 	v := tea.NewView("loading…")
 	v.AltScreen = true
+	// Report mouse events so the wheel scrolls the chat viewport; without
+	// this, terminals fake wheel input as arrow keys, which now belong to
+	// the textarea. Text selection needs shift-drag, as usual in TUIs.
+	v.MouseMode = tea.MouseModeCellMotion
 	if m.width == 0 {
 		return v
 	}
@@ -533,7 +537,7 @@ func (m appModel) View() tea.View {
 			bottomBarStyle.Render(bottomBar)))
 	case stateChat:
 		cost := fmt.Sprintf("~$%.4f • %s in / %s out",
-			m.sessionCost(), formatTokens(m.promptTokens), formatTokens(m.completionTokens))
+			m.sessionCost(), formatTokens(m.inputTokens), formatTokens(m.outputTokens))
 		header := headerBarStyle.Render(headerStyle.Render(m.chosen) + helpStyle.Render("  "+cost))
 
 		bottomBar := m.help.View(m.keys)

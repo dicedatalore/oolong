@@ -1,71 +1,39 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
-)
 
-const (
-	chatCompletionsURL = "https://api.openai.com/v1/chat/completions"
-	modelsURL          = "https://api.openai.com/v1/models"
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 type openaiClient struct {
-	apiKey string
-	http   *http.Client
+	api openai.Client
 }
 
-func newOpenAIClient(apiKey string) *openaiClient {
-	return &openaiClient{
-		apiKey: apiKey,
-		http:   &http.Client{Timeout: 2 * time.Minute},
-	}
+func newOpenAIClient(apiKey string, opts ...option.RequestOption) *openaiClient {
+	opts = append([]option.RequestOption{
+		option.WithAPIKey(apiKey),
+		option.WithRequestTimeout(2 * time.Minute),
+	}, opts...)
+	return &openaiClient{api: openai.NewClient(opts...)}
 }
 
 type apiMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type chatRequest struct {
-	Model         string         `json:"model"`
-	Messages      []apiMessage   `json:"messages"`
-	Stream        bool           `json:"stream,omitempty"`
-	StreamOptions *streamOptions `json:"stream_options,omitempty"`
-}
-
-type streamOptions struct {
-	IncludeUsage bool `json:"include_usage"`
+	Role    string
+	Content string
 }
 
 type apiUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-}
-
-// chatErrorResponse is the shape of a non-200 (non-SSE) failure body.
-type chatErrorResponse struct {
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-type chatStreamChunk struct {
-	Choices []struct {
-		Delta struct {
-			Content string `json:"content"`
-		} `json:"delta"`
-	} `json:"choices"`
-	Usage *apiUsage `json:"usage"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	InputTokens  int
+	OutputTokens int
 }
 
 // streamEvent is one item of a streamed reply: a content delta, a terminal
@@ -77,7 +45,7 @@ type streamEvent struct {
 	err   error
 }
 
-// streamChat streams a chat completion, sending one streamEvent per content
+// streamChat streams a model response, sending one streamEvent per content
 // delta on ch, terminated by a done or err event. It closes ch on return and
 // aborts (without a terminal event) if ctx is cancelled.
 func (c *openaiClient) streamChat(ctx context.Context, model string, messages []apiMessage, ch chan<- streamEvent) {
@@ -92,103 +60,80 @@ func (c *openaiClient) streamChat(ctx context.Context, model string, messages []
 		}
 	}
 
-	body, err := json.Marshal(chatRequest{
-		Model:         model,
-		Messages:      messages,
-		Stream:        true,
-		StreamOptions: &streamOptions{IncludeUsage: true},
+	input := make(responses.ResponseInputParam, 0, len(messages))
+	for _, m := range messages {
+		input = append(input, responses.ResponseInputItemParamOfMessage(m.Content, responses.EasyInputMessageRole(m.Role)))
+	}
+
+	stream := c.api.Responses.NewStreaming(ctx, responses.ResponseNewParams{
+		Model: shared.ResponsesModel(model),
+		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: input},
+		// The Responses API stores responses by default; this client keeps
+		// history locally, so opt out.
+		Store: openai.Bool(false),
 	})
-	if err != nil {
-		emit(streamEvent{err: err})
-		return
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL, bytes.NewReader(body))
-	if err != nil {
-		emit(streamEvent{err: err})
-		return
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		emit(streamEvent{err: err})
-		return
-	}
-	defer resp.Body.Close()
-
-	// Failures come back as a plain JSON error object, not an SSE stream.
-	if resp.StatusCode != http.StatusOK {
-		var parsed chatErrorResponse
-		if err := json.NewDecoder(resp.Body).Decode(&parsed); err == nil && parsed.Error != nil {
-			emit(streamEvent{err: fmt.Errorf("openai: %s", parsed.Error.Message)})
-		} else {
-			emit(streamEvent{err: fmt.Errorf("openai: HTTP %d", resp.StatusCode)})
-		}
-		return
-	}
+	defer stream.Close()
 
 	var usage apiUsage
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
-		if !ok {
-			continue
-		}
-		if data == "[DONE]" {
-			break
-		}
-		var chunk chatStreamChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			emit(streamEvent{err: fmt.Errorf("decoding stream: %w", err)})
-			return
-		}
-		if chunk.Error != nil {
-			emit(streamEvent{err: fmt.Errorf("openai: %s", chunk.Error.Message)})
-			return
-		}
-		if chunk.Usage != nil {
-			usage = *chunk.Usage
-		}
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			if !emit(streamEvent{delta: chunk.Choices[0].Delta.Content}) {
+	for stream.Next() {
+		ev := stream.Current()
+		switch ev.Type {
+		case "response.output_text.delta":
+			if ev.Delta != "" && !emit(streamEvent{delta: ev.Delta}) {
 				return
 			}
+		case "response.completed":
+			usage = apiUsage{
+				InputTokens:  int(ev.Response.Usage.InputTokens),
+				OutputTokens: int(ev.Response.Usage.OutputTokens),
+			}
+		case "response.failed", "response.incomplete":
+			msg := ev.Response.Error.Message
+			if msg == "" {
+				msg = "response " + strings.TrimPrefix(ev.Type, "response.")
+			}
+			emit(streamEvent{err: fmt.Errorf("openai: %s", msg)})
+			return
+		case "error":
+			emit(streamEvent{err: fmt.Errorf("openai: %s", ev.Message)})
+			return
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		emit(streamEvent{err: err})
+	if err := stream.Err(); err != nil {
+		emit(streamEvent{err: apiError(err)})
 		return
 	}
 	emit(streamEvent{done: true, usage: usage})
+}
+
+// apiError reduces the SDK's verbose API error (method, URL, raw body) to
+// just the server's message, which is what the UI shows.
+func apiError(err error) error {
+	var apierr *openai.Error
+	if errors.As(err, &apierr) {
+		if apierr.Message != "" {
+			return fmt.Errorf("openai: %s", apierr.Message)
+		}
+		return fmt.Errorf("openai: HTTP %d", apierr.StatusCode)
+	}
+	return err
 }
 
 // validateAPIKey checks the key against the models endpoint, which is free
 // and spends no tokens. The API's own 401 message can echo the key back, so
 // it is replaced with a generic error.
 func validateAPIKey(key string) error {
-	req, err := http.NewRequest(http.MethodGet, modelsURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+key)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
+	client := openai.NewClient(option.WithAPIKey(key))
+	_, err := client.Models.List(ctx)
+	var apierr *openai.Error
+	if errors.As(err, &apierr) {
+		if apierr.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("invalid API key")
+		}
+		return fmt.Errorf("openai: HTTP %d", apierr.StatusCode)
 	}
-	defer resp.Body.Close()
-
-	switch {
-	case resp.StatusCode == http.StatusOK:
-		return nil
-	case resp.StatusCode == http.StatusUnauthorized:
-		return fmt.Errorf("invalid API key")
-	default:
-		return fmt.Errorf("openai: HTTP %d", resp.StatusCode)
-	}
+	return err
 }

@@ -5,22 +5,18 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
+
+	"github.com/openai/openai-go/v3/option"
 )
 
-type rewriteTransport struct{ base string }
-
-func (t rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	u, _ := url.Parse(t.base)
-	req.URL.Scheme = u.Scheme
-	req.URL.Host = u.Host
-	return http.DefaultTransport.RoundTrip(req)
+func clientFor(srv *httptest.Server) *openaiClient {
+	return newOpenAIClient("test", option.WithBaseURL(srv.URL), option.WithMaxRetries(0))
 }
 
-func clientFor(srv *httptest.Server) *openaiClient {
-	return &openaiClient{apiKey: "test", http: &http.Client{Transport: rewriteTransport{srv.URL}}}
+func sseEvent(w http.ResponseWriter, typ, data string) {
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", typ, data)
 }
 
 func TestStreamChatDeltasAndUsage(t *testing.T) {
@@ -28,11 +24,12 @@ func TestStreamChatDeltasAndUsage(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fl := w.(http.Flusher)
 		for _, s := range []string{"Hello", ", ", "world"} {
-			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", s)
+			sseEvent(w, "response.output_text.delta",
+				fmt.Sprintf(`{"type":"response.output_text.delta","delta":%q}`, s))
 			fl.Flush()
 		}
-		fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n\n")
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		sseEvent(w, "response.completed",
+			`{"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}}}`)
 	}))
 	defer srv.Close()
 
@@ -46,7 +43,7 @@ func TestStreamChatDeltasAndUsage(t *testing.T) {
 		case ev.err != nil:
 			t.Fatalf("unexpected error: %v", ev.err)
 		case ev.done:
-			if ev.usage.PromptTokens != 5 || ev.usage.CompletionTokens != 3 {
+			if ev.usage.InputTokens != 5 || ev.usage.OutputTokens != 3 {
 				t.Errorf("usage = %+v, want 5/3", ev.usage)
 			}
 		default:
@@ -61,6 +58,7 @@ func TestStreamChatDeltasAndUsage(t *testing.T) {
 
 func TestStreamChatAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, `{"error":{"message":"bad key"}}`)
 	}))
@@ -78,12 +76,33 @@ func TestStreamChatAPIError(t *testing.T) {
 	}
 }
 
+func TestStreamChatFailedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		sseEvent(w, "response.failed",
+			`{"type":"response.failed","response":{"error":{"code":"server_error","message":"boom"}}}`)
+	}))
+	defer srv.Close()
+
+	ch := make(chan streamEvent)
+	go clientFor(srv).streamChat(context.Background(), "m", nil, ch)
+
+	ev := <-ch
+	if ev.err == nil || ev.err.Error() != "openai: boom" {
+		t.Errorf("err = %v, want openai: boom", ev.err)
+	}
+	if _, ok := <-ch; ok {
+		t.Error("channel not closed after error")
+	}
+}
+
 func TestStreamChatCancel(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fl := w.(http.Flusher)
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+		sseEvent(w, "response.output_text.delta",
+			`{"type":"response.output_text.delta","delta":"partial"}`)
 		fl.Flush()
 		<-release
 	}))
