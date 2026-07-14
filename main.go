@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -94,12 +95,7 @@ func newChatKeyMap() chatKeyMap {
 	}
 }
 
-type replyMsg struct {
-	content string
-	usage   apiUsage
-}
-
-type errMsg struct{ err error }
+type streamEventMsg streamEvent
 
 type keyCheckMsg struct {
 	key string
@@ -123,6 +119,10 @@ type appModel struct {
 	messages []apiMessage
 	waiting  bool
 	errText  string
+
+	stream       <-chan streamEvent
+	cancelStream context.CancelFunc
+	streaming    bool // an in-progress assistant message is the last element of messages
 
 	promptTokens     int
 	completionTokens int
@@ -235,18 +235,38 @@ func (m *appModel) conversationView() string {
 	return b.String()
 }
 
-func (m *appModel) sendCmd() tea.Cmd {
+func (m *appModel) startStream() tea.Cmd {
 	history := make([]apiMessage, len(m.messages))
 	copy(history, m.messages)
-	model := m.chosen
-	client := m.client
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan streamEvent)
+	m.stream = ch
+	m.cancelStream = cancel
+	m.streaming = false
+	go m.client.streamChat(ctx, m.chosen, history, ch)
+	return readStream(ch)
+}
+
+// readStream waits for the next event from the in-flight stream. It is
+// re-issued from Update after each delta so events arrive one per message.
+func readStream(ch <-chan streamEvent) tea.Cmd {
 	return func() tea.Msg {
-		reply, usage, err := client.complete(model, history)
-		if err != nil {
-			return errMsg{err}
+		ev, ok := <-ch
+		if !ok {
+			return nil
 		}
-		return replyMsg{content: reply, usage: usage}
+		return streamEventMsg(ev)
 	}
+}
+
+func (m *appModel) finishStream() {
+	if m.cancelStream != nil {
+		m.cancelStream()
+		m.cancelStream = nil
+	}
+	m.stream = nil
+	m.streaming = false
+	m.waiting = false
 }
 
 func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -268,25 +288,33 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-	case replyMsg:
-		if m.state != stateChat {
+	case streamEventMsg:
+		if m.state != stateChat || m.stream == nil {
 			return m, nil
 		}
-		m.waiting = false
-		m.promptTokens += msg.usage.PromptTokens
-		m.completionTokens += msg.usage.CompletionTokens
-		m.messages = append(m.messages, apiMessage{Role: "assistant", Content: msg.content})
-		m.vp.SetContent(m.conversationView())
-		m.vp.GotoBottom()
-		return m, nil
-
-	case errMsg:
-		if m.state != stateChat {
+		switch {
+		case msg.err != nil:
+			m.finishStream()
+			m.errText = msg.err.Error()
 			return m, nil
+		case msg.done:
+			m.finishStream()
+			m.promptTokens += msg.usage.PromptTokens
+			m.completionTokens += msg.usage.CompletionTokens
+			return m, nil
+		default:
+			if !m.streaming {
+				m.streaming = true
+				m.messages = append(m.messages, apiMessage{Role: "assistant"})
+			}
+			m.messages[len(m.messages)-1].Content += msg.delta
+			atBottom := m.vp.AtBottom()
+			m.vp.SetContent(m.conversationView())
+			if atBottom {
+				m.vp.GotoBottom()
+			}
+			return m, readStream(m.stream)
 		}
-		m.waiting = false
-		m.errText = msg.err.Error()
-		return m, nil
 
 	case keyCheckMsg:
 		if m.state != stateKeyEntry {
@@ -399,8 +427,8 @@ func (m appModel) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "esc":
+			m.finishStream()
 			m.state = statePicker
-			m.waiting = false
 			m.messages = nil
 			m.errText = ""
 			m.promptTokens = 0
@@ -418,7 +446,7 @@ func (m appModel) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.SetContent(m.conversationView())
 			m.vp.GotoBottom()
 			m.waiting = true
-			return m, tea.Batch(m.spin.Tick, m.sendCmd())
+			return m, tea.Batch(m.spin.Tick, m.startStream())
 		}
 	}
 
@@ -476,7 +504,11 @@ func (m appModel) View() string {
 
 		bottomBar := m.help.View(m.keys)
 		if m.waiting {
-			bottomBar = m.spin.View() + helpStyle.Render("thinking…")
+			label := "thinking…"
+			if m.streaming {
+				label = "streaming…"
+			}
+			bottomBar = m.spin.View() + helpStyle.Render(label)
 		}
 		if m.errText != "" {
 			bottomBar = errorStyle.Render("error: " + m.errText)
