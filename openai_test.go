@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +75,35 @@ func TestStreamChatAPIError(t *testing.T) {
 	}
 	if _, ok := <-ch; ok {
 		t.Error("channel not closed after error")
+	}
+}
+
+func TestStreamChatSendsImages(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		sseEvent(w, "response.completed",
+			`{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	}))
+	defer srv.Close()
+
+	msgs := []apiMessage{{Role: "user", Content: "look", Images: [][]byte{{1, 2, 3}}}}
+	ch := make(chan streamEvent)
+	go clientFor(srv).streamChat(context.Background(), "m", msgs, ch)
+	for ev := range ch {
+		if ev.err != nil {
+			t.Fatalf("unexpected error: %v", ev.err)
+		}
+	}
+
+	for _, want := range []string{
+		`"text":"look"`,
+		`"image_url":"data:image/png;base64,AQID"`, // base64 of 1,2,3
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("request body missing %s:\n%s", want, body)
+		}
 	}
 }
 

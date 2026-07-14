@@ -75,13 +75,14 @@ func (m modelItem) FilterValue() string { return m.id }
 type chatKeyMap struct {
 	Send    key.Binding
 	NewLine key.Binding
+	Paste   key.Binding
 	Scroll  key.Binding
 	Back    key.Binding
 	Quit    key.Binding
 }
 
 func (k chatKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Send, k.NewLine, k.Scroll, k.Back, k.Quit}
+	return []key.Binding{k.Send, k.NewLine, k.Paste, k.Scroll, k.Back, k.Quit}
 }
 
 func (k chatKeyMap) FullHelp() [][]key.Binding {
@@ -92,6 +93,7 @@ func newChatKeyMap() chatKeyMap {
 	return chatKeyMap{
 		Send:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
 		NewLine: key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"), key.WithHelp("shift+enter", "new line")),
+		Paste:   key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("ctrl+v", "paste text/image")),
 		Scroll:  key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "scroll")),
 		Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "change model")),
 		Quit:    key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
@@ -124,9 +126,10 @@ type appModel struct {
 	waiting  bool
 	errText  string
 
-	stream       <-chan streamEvent
-	cancelStream context.CancelFunc
-	streaming    bool // an in-progress assistant message is the last element of messages
+	stream        <-chan streamEvent
+	cancelStream  context.CancelFunc
+	streaming     bool     // an in-progress assistant message is the last element of messages
+	pendingImages [][]byte // pasted images sent with the next message
 
 	inputTokens  int
 	outputTokens int
@@ -215,6 +218,9 @@ func (m *appModel) layoutChat() {
 	contentHeight := m.height - pageStyle.GetVerticalFrameSize()
 	headerHeight := 1 + headerBarStyle.GetVerticalFrameSize()
 	inputHeight := m.input.Height()
+	if len(m.pendingImages) > 0 {
+		inputHeight++ // attachment indicator line above the input
+	}
 	bottomBarHeight := 1 + bottomBarStyle.GetVerticalFrameSize()
 	m.vp.SetWidth(contentWidth)
 	m.vp.SetHeight(contentHeight - headerHeight - inputHeight - bottomBarHeight)
@@ -239,7 +245,13 @@ func (m *appModel) conversationView() string {
 	for _, msg := range m.messages {
 		if msg.Role == "user" {
 			b.WriteString(userLabelStyle.Render("You") + "\n")
-			b.WriteString(userTextStyle.Width(m.vp.Width()-2).Render(msg.Content) + "\n\n")
+			if n := len(msg.Images); n > 0 {
+				b.WriteString(userTextStyle.Render(helpStyle.Render(imageLabel(n))) + "\n")
+			}
+			if msg.Content != "" {
+				b.WriteString(userTextStyle.Width(m.vp.Width()-2).Render(msg.Content) + "\n")
+			}
+			b.WriteString("\n")
 			continue
 		}
 		b.WriteString(botLabelStyle.Render(m.chosen) + "\n")
@@ -450,15 +462,25 @@ func (m appModel) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errText = ""
 			m.inputTokens = 0
 			m.outputTokens = 0
+			m.pendingImages = nil
 			m.input.Blur()
 			return m, nil
+		case "ctrl+v":
+			// An image on the clipboard becomes an attachment; otherwise
+			// fall through and let the textarea paste it as text.
+			if img, err := clipboardImage(); err == nil && len(img) > 0 {
+				m.pendingImages = append(m.pendingImages, img)
+				m.layoutChat()
+				return m, nil
+			}
 		case "enter":
 			text := strings.TrimSpace(m.input.Value())
-			if m.waiting || text == "" {
+			if m.waiting || (text == "" && len(m.pendingImages) == 0) {
 				return m, nil
 			}
 			m.errText = ""
-			m.messages = append(m.messages, apiMessage{Role: "user", Content: text})
+			m.messages = append(m.messages, apiMessage{Role: "user", Content: text, Images: m.pendingImages})
+			m.pendingImages = nil
 			m.input.SetValue("")
 			m.layoutChat()
 			m.vp.SetContent(m.conversationView())
@@ -497,6 +519,13 @@ func (m appModel) sessionCost() float64 {
 		return 0
 	}
 	return float64(m.inputTokens)/1e6*r.input + float64(m.outputTokens)/1e6*r.output
+}
+
+func imageLabel(n int) string {
+	if n == 1 {
+		return "📎 1 image"
+	}
+	return fmt.Sprintf("📎 %d images", n)
 }
 
 func formatTokens(n int) string {
@@ -553,8 +582,13 @@ func (m appModel) View() tea.View {
 		}
 		bottomBar = bottomBarStyle.Render(bottomBar)
 
+		inputArea := inputRowStyle.Render(m.input.View())
+		if n := len(m.pendingImages); n > 0 {
+			inputArea = inputRowStyle.Render(helpStyle.Render(imageLabel(n)+" — sent with next message")) +
+				"\n" + inputArea
+		}
 		v.SetContent(pageStyle.Render(header + "\n" + m.vp.View() + "\n" +
-			inputRowStyle.Render(m.input.View()) + "\n" + bottomBar))
+			inputArea + "\n" + bottomBar))
 	}
 	return v
 }

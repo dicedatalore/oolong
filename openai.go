@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 )
@@ -29,6 +31,7 @@ func newOpenAIClient(apiKey string, opts ...option.RequestOption) *openaiClient 
 type apiMessage struct {
 	Role    string
 	Content string
+	Images  [][]byte // PNG-encoded attachments, user messages only
 }
 
 type apiUsage struct {
@@ -62,7 +65,21 @@ func (c *openaiClient) streamChat(ctx context.Context, model string, messages []
 
 	input := make(responses.ResponseInputParam, 0, len(messages))
 	for _, m := range messages {
-		input = append(input, responses.ResponseInputItemParamOfMessage(m.Content, responses.EasyInputMessageRole(m.Role)))
+		role := responses.EasyInputMessageRole(m.Role)
+		if len(m.Images) == 0 {
+			input = append(input, responses.ResponseInputItemParamOfMessage(m.Content, role))
+			continue
+		}
+		content := make(responses.ResponseInputMessageContentListParam, 0, len(m.Images)+1)
+		if m.Content != "" {
+			content = append(content, responses.ResponseInputContentParamOfInputText(m.Content))
+		}
+		for _, img := range m.Images {
+			item := responses.ResponseInputContentParamOfInputImage(responses.ResponseInputImageDetailAuto)
+			item.OfInputImage.ImageURL = param.NewOpt("data:image/png;base64," + base64.StdEncoding.EncodeToString(img))
+			content = append(content, item)
+		}
+		input = append(input, responses.ResponseInputItemParamOfMessage(content, role))
 	}
 
 	stream := c.api.Responses.NewStreaming(ctx, responses.ResponseNewParams{
