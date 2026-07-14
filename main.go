@@ -168,6 +168,12 @@ func newAppModel(client *openaiClient, mdStyle string) appModel {
 		key.WithKeys("shift+enter", "ctrl+j"),
 		key.WithHelp("shift+enter", "new line"),
 	)
+	// The textarea's default focused style paints the active line with a
+	// background color, which reads as a gray block against the rest of
+	// the view. Drop it so the input row matches the surrounding bg.
+	inputStyles := input.Styles()
+	inputStyles.Focused.CursorLine = inputStyles.Focused.CursorLine.Background(lipgloss.NoColor{})
+	input.SetStyles(inputStyles)
 
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
