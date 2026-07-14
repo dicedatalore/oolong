@@ -7,16 +7,17 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 )
 
@@ -72,14 +73,15 @@ func (m modelItem) Description() string { return m.desc }
 func (m modelItem) FilterValue() string { return m.id }
 
 type chatKeyMap struct {
-	Send   key.Binding
-	Scroll key.Binding
-	Back   key.Binding
-	Quit   key.Binding
+	Send    key.Binding
+	NewLine key.Binding
+	Scroll  key.Binding
+	Back    key.Binding
+	Quit    key.Binding
 }
 
 func (k chatKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Send, k.Scroll, k.Back, k.Quit}
+	return []key.Binding{k.Send, k.NewLine, k.Scroll, k.Back, k.Quit}
 }
 
 func (k chatKeyMap) FullHelp() [][]key.Binding {
@@ -88,10 +90,11 @@ func (k chatKeyMap) FullHelp() [][]key.Binding {
 
 func newChatKeyMap() chatKeyMap {
 	return chatKeyMap{
-		Send:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
-		Scroll: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "scroll")),
-		Back:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "change model")),
-		Quit:   key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
+		Send:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
+		NewLine: key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"), key.WithHelp("shift+enter", "new line")),
+		Scroll:  key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "scroll")),
+		Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "change model")),
+		Quit:    key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
 	}
 }
 
@@ -110,11 +113,12 @@ type appModel struct {
 	picker list.Model
 	chosen string
 
-	input    textinput.Model
+	input    textarea.Model
 	vp       viewport.Model
 	spin     spinner.Model
 	help     help.Model
 	keys     chatKeyMap
+	initCmd  tea.Cmd
 	renderer *glamour.TermRenderer
 	messages []apiMessage
 	waiting  bool
@@ -151,9 +155,19 @@ func newAppModel(client *openaiClient, mdStyle string) appModel {
 		}
 	}
 
-	input := textinput.New()
+	input := textarea.New()
 	input.Placeholder = "Send a message…"
 	input.CharLimit = 0
+	input.ShowLineNumbers = false
+	input.DynamicHeight = true
+	input.MaxHeight = 5
+	// Enter sends the message; newlines are inserted with shift+enter
+	// (requires a terminal with keyboard enhancements, e.g. Kitty protocol)
+	// or ctrl+j as a universal fallback.
+	input.KeyMap.InsertNewline = key.NewBinding(
+		key.WithKeys("shift+enter", "ctrl+j"),
+		key.WithHelp("shift+enter", "new line"),
+	)
 
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
@@ -166,9 +180,10 @@ func newAppModel(client *openaiClient, mdStyle string) appModel {
 	keyInput.CharLimit = 0
 
 	state := statePicker
+	var initCmd tea.Cmd
 	if client == nil {
 		state = stateKeyEntry
-		keyInput.Focus()
+		initCmd = keyInput.Focus()
 	}
 
 	return appModel{
@@ -178,6 +193,7 @@ func newAppModel(client *openaiClient, mdStyle string) appModel {
 		spin:     spin,
 		help:     help.New(),
 		keys:     newChatKeyMap(),
+		initCmd:  initCmd,
 		keyInput: keyInput,
 		mdStyle:  mdStyle,
 		client:   client,
@@ -185,22 +201,19 @@ func newAppModel(client *openaiClient, mdStyle string) appModel {
 }
 
 func (m appModel) Init() tea.Cmd {
-	if m.state == stateKeyEntry {
-		return textinput.Blink
-	}
-	return nil
+	return m.initCmd
 }
 
 func (m *appModel) layoutChat() {
 	contentWidth := m.width - pageStyle.GetHorizontalFrameSize()
 	contentHeight := m.height - pageStyle.GetVerticalFrameSize()
 	headerHeight := 1 + headerBarStyle.GetVerticalFrameSize()
-	inputHeight := 1
+	inputHeight := m.input.Height()
 	bottomBarHeight := 1 + bottomBarStyle.GetVerticalFrameSize()
-	m.vp.Width = contentWidth
-	m.vp.Height = contentHeight - headerHeight - inputHeight - bottomBarHeight
-	m.input.Width = contentWidth - inputRowStyle.GetHorizontalFrameSize() - 4
-	m.help.Width = contentWidth - bottomBarStyle.GetHorizontalFrameSize()
+	m.vp.SetWidth(contentWidth)
+	m.vp.SetHeight(contentHeight - headerHeight - inputHeight - bottomBarHeight)
+	m.input.SetWidth(contentWidth - inputRowStyle.GetHorizontalFrameSize() - 4)
+	m.help.SetWidth(contentWidth - bottomBarStyle.GetHorizontalFrameSize())
 
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle(m.mdStyle),
@@ -220,7 +233,7 @@ func (m *appModel) conversationView() string {
 	for _, msg := range m.messages {
 		if msg.Role == "user" {
 			b.WriteString(userLabelStyle.Render("You") + "\n")
-			b.WriteString(userTextStyle.Width(m.vp.Width-2).Render(msg.Content) + "\n\n")
+			b.WriteString(userTextStyle.Width(m.vp.Width()-2).Render(msg.Content) + "\n\n")
 			continue
 		}
 		b.WriteString(botLabelStyle.Render(m.chosen) + "\n")
@@ -283,7 +296,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
@@ -358,7 +371,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m appModel) updateKeyEntry(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
 		if m.keyValidating {
 			if key.String() == "esc" {
 				return m, tea.Quit
@@ -387,7 +400,7 @@ func (m appModel) updateKeyEntry(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m appModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok && m.picker.FilterState() != list.Filtering {
+	if key, ok := msg.(tea.KeyPressMsg); ok && m.picker.FilterState() != list.Filtering {
 		switch key.String() {
 		case "q", "esc":
 			return m, tea.Quit
@@ -397,8 +410,7 @@ func (m appModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.keyNotice = ""
 			m.keyErr = ""
 			m.state = stateKeyEntry
-			m.keyInput.Focus()
-			return m, textinput.Blink
+			return m, m.keyInput.Focus()
 		case "enter":
 			item, ok := m.picker.SelectedItem().(modelItem)
 			if !ok {
@@ -411,11 +423,10 @@ func (m appModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errText = ""
 			m.promptTokens = 0
 			m.completionTokens = 0
-			m.vp = viewport.New(m.width, m.height)
-			m.layoutChat()
+			m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(m.height))
 			m.input.SetValue("")
-			m.input.Focus()
-			return m, textinput.Blink
+			m.layoutChat()
+			return m, m.input.Focus()
 		}
 	}
 	var cmd tea.Cmd
@@ -424,7 +435,7 @@ func (m appModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m appModel) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.String() {
 		case "esc":
 			m.finishStream()
@@ -443,11 +454,26 @@ func (m appModel) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errText = ""
 			m.messages = append(m.messages, apiMessage{Role: "user", Content: text})
 			m.input.SetValue("")
+			m.layoutChat()
 			m.vp.SetContent(m.conversationView())
 			m.vp.GotoBottom()
 			m.waiting = true
 			return m, tea.Batch(m.spin.Tick, m.startStream())
+		case "pgup", "pgdown":
+			var cmd tea.Cmd
+			m.vp, cmd = m.vp.Update(msg)
+			return m, cmd
 		}
+		// Remaining keys belong to the textarea; up/down move the cursor
+		// there, so the viewport must not also see them.
+		var cmd tea.Cmd
+		prevHeight := m.input.Height()
+		m.input, cmd = m.input.Update(msg)
+		if m.input.Height() != prevHeight {
+			m.layoutChat()
+			m.vp.GotoBottom()
+		}
+		return m, cmd
 	}
 
 	var cmds []tea.Cmd
@@ -474,9 +500,11 @@ func formatTokens(n int) string {
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
-func (m appModel) View() string {
+func (m appModel) View() tea.View {
+	v := tea.NewView("loading…")
+	v.AltScreen = true
 	if m.width == 0 {
-		return "loading…"
+		return v
 	}
 
 	switch m.state {
@@ -485,7 +513,7 @@ func (m appModel) View() string {
 		if m.keyNotice != "" {
 			view += "\n" + bottomBarStyle.Render(helpStyle.Render(m.keyNotice))
 		}
-		return pageStyle.Render(view)
+		v.SetContent(pageStyle.Render(view))
 	case stateKeyEntry:
 		header := headerBarStyle.Render(headerStyle.Render("OpenAI API key"))
 		bottomBar := helpStyle.Render("enter: save to keychain • esc: quit")
@@ -494,9 +522,9 @@ func (m appModel) View() string {
 		} else if m.keyErr != "" {
 			bottomBar = errorStyle.Render(m.keyErr)
 		}
-		return pageStyle.Render(header + "\n" +
+		v.SetContent(pageStyle.Render(header + "\n" +
 			inputRowStyle.Render(m.keyInput.View()) + "\n" +
-			bottomBarStyle.Render(bottomBar))
+			bottomBarStyle.Render(bottomBar)))
 	case stateChat:
 		cost := fmt.Sprintf("~$%.4f • %s in / %s out",
 			m.sessionCost(), formatTokens(m.promptTokens), formatTokens(m.completionTokens))
@@ -515,10 +543,10 @@ func (m appModel) View() string {
 		}
 		bottomBar = bottomBarStyle.Render(bottomBar)
 
-		return pageStyle.Render(header + "\n" + m.vp.View() + "\n" +
-			inputRowStyle.Render(m.input.View()) + "\n" + bottomBar)
+		v.SetContent(pageStyle.Render(header + "\n" + m.vp.View() + "\n" +
+			inputRowStyle.Render(m.input.View()) + "\n" + bottomBar))
 	}
-	return ""
+	return v
 }
 
 func main() {
@@ -545,7 +573,7 @@ func main() {
 		client = newOpenAIClient(key)
 	}
 	app := newAppModel(client, mdStyle)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(app)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error running program: %v\n", err)
 		os.Exit(1)
