@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	keyringService = "bubble-chat"
+	keyringService = "oolong"
 	keyringUser    = "openai_api_key"
 )
 

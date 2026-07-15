@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -30,6 +31,12 @@ const (
 )
 
 var (
+	// peach is the app's primary accent and purple the secondary; the logo
+	// gradient in header.go runs between the same two colors.
+	peach    = lipgloss.Color("#FFAF87")
+	peachDim = lipgloss.Color("#C98B69")
+	purple   = lipgloss.Color("#7D56F4")
+
 	pageStyle = lipgloss.NewStyle().Padding(1, 1)
 
 	// headerBarStyle/headerStyle/bottomBarStyle mirror the list bubble's
@@ -37,15 +44,15 @@ var (
 	headerBarStyle = lipgloss.NewStyle().Padding(0, 0, 1, 2)
 
 	headerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("62")).
+			Foreground(lipgloss.Color("235")).
+			Background(peach).
 			Padding(0, 1)
 
 	inputRowStyle  = lipgloss.NewStyle().PaddingLeft(2)
 	bottomBarStyle = lipgloss.NewStyle().Padding(1, 0, 0, 2)
 
-	userLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#04B575"))
-	botLabelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4"))
+	userLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(peach)
+	botLabelStyle  = lipgloss.NewStyle().Bold(true).Foreground(purple)
 	userTextStyle  = lipgloss.NewStyle().PaddingLeft(2)
 	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	errorStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87"))
@@ -102,6 +109,17 @@ func newChatKeyMap() chatKeyMap {
 
 type streamEventMsg streamEvent
 
+// sparkleMsg re-randomizes the banner's stripe row while the picker is
+// showing. The tag ties a tick to the picker visit that scheduled it, so a
+// stale tick from a previous visit can't start a second tick loop.
+type sparkleMsg struct{ tag int }
+
+func sparkleTick(tag int) tea.Cmd {
+	return tea.Tick(300*time.Millisecond, func(time.Time) tea.Msg {
+		return sparkleMsg{tag: tag}
+	})
+}
+
 type keyCheckMsg struct {
 	key string
 	err error
@@ -139,8 +157,20 @@ type appModel struct {
 	keyNotice     string
 	keyValidating bool
 
-	mdStyle string
-	client  *openaiClient
+	mdStyle    string
+	client     *openaiClient
+	logo       string
+	sparkleTag int
+}
+
+// pickerLogo returns the banner shown above the model picker, or "" when the
+// window is too narrow for the wordmark to fit without wrapping.
+func (m appModel) pickerLogo() string {
+	contentWidth := m.width - pageStyle.GetHorizontalFrameSize()
+	if contentWidth < lipgloss.Width(logoRows[0])+headerBarStyle.GetHorizontalFrameSize() {
+		return ""
+	}
+	return headerBarStyle.Render(m.logo)
 }
 
 func newAppModel(client *openaiClient, mdStyle string) appModel {
@@ -149,8 +179,15 @@ func newAppModel(client *openaiClient, mdStyle string) appModel {
 		modelItem{id: "gpt-5.6-terra", desc: "Balanced speed and capability"},
 		modelItem{id: "gpt-5.6-sol", desc: "Most capable"},
 	}
-	picker := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	delegate := list.NewDefaultDelegate()
+	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
+		Foreground(peach).BorderForeground(peach)
+	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
+		Foreground(peachDim).BorderForeground(peach)
+	picker := list.New(items, delegate, 0, 0)
 	picker.Title = "Pick a model"
+	picker.Styles.Title = headerStyle
+	picker.Styles.ActivePaginationDot = picker.Styles.ActivePaginationDot.Foreground(peach)
 	picker.SetShowStatusBar(false)
 	picker.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
@@ -180,7 +217,7 @@ func newAppModel(client *openaiClient, mdStyle string) appModel {
 
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
-	spin.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
+	spin.Style = lipgloss.NewStyle().Foreground(peach)
 
 	keyInput := textinput.New()
 	keyInput.Placeholder = "sk-..."
@@ -189,7 +226,7 @@ func newAppModel(client *openaiClient, mdStyle string) appModel {
 	keyInput.CharLimit = 0
 
 	state := statePicker
-	var initCmd tea.Cmd
+	initCmd := sparkleTick(0)
 	if client == nil {
 		state = stateKeyEntry
 		initCmd = keyInput.Focus()
@@ -206,6 +243,7 @@ func newAppModel(client *openaiClient, mdStyle string) appModel {
 		keyInput: keyInput,
 		mdStyle:  mdStyle,
 		client:   client,
+		logo:     renderLogoHeader(),
 	}
 }
 
@@ -305,9 +343,13 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		pickerHeight := msg.Height - pageStyle.GetVerticalFrameSize()
+		if logo := m.pickerLogo(); logo != "" {
+			pickerHeight -= lipgloss.Height(logo)
+		}
 		m.picker.SetSize(
 			msg.Width-pageStyle.GetHorizontalFrameSize(),
-			msg.Height-pageStyle.GetVerticalFrameSize(),
+			pickerHeight,
 		)
 		if m.state == stateChat {
 			m.layoutChat()
@@ -318,6 +360,13 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
+
+	case sparkleMsg:
+		if m.state != statePicker || msg.tag != m.sparkleTag {
+			return m, nil
+		}
+		m.logo = renderLogoHeader()
+		return m, sparkleTick(msg.tag)
 
 	case streamEventMsg:
 		if m.state != stateChat || m.stream == nil {
@@ -366,7 +415,8 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.keyInput.Blur()
 		m.keyErr = ""
 		m.state = statePicker
-		return m, nil
+		m.sparkleTag++
+		return m, sparkleTick(m.sparkleTag)
 
 	case spinner.TickMsg:
 		if !m.waiting && !m.keyValidating {
@@ -464,7 +514,8 @@ func (m appModel) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.outputTokens = 0
 			m.pendingImages = nil
 			m.input.Blur()
-			return m, nil
+			m.sparkleTag++
+			return m, sparkleTick(m.sparkleTag)
 		case "ctrl+v":
 			// An image on the clipboard becomes an attachment; otherwise
 			// fall through and let the textarea paste it as text.
@@ -549,6 +600,9 @@ func (m appModel) View() tea.View {
 	switch m.state {
 	case statePicker:
 		view := m.picker.View()
+		if logo := m.pickerLogo(); logo != "" {
+			view = logo + "\n" + view
+		}
 		if m.keyNotice != "" {
 			view += "\n" + bottomBarStyle.Render(helpStyle.Render(m.keyNotice))
 		}
