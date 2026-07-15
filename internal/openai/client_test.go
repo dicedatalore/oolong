@@ -1,4 +1,4 @@
-package main
+package openai
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 	"github.com/openai/openai-go/v3/option"
 )
 
-func clientFor(srv *httptest.Server) *openaiClient {
-	return newOpenAIClient("test", option.WithBaseURL(srv.URL), option.WithMaxRetries(0))
+func clientFor(srv *httptest.Server) *Client {
+	return New("test", option.WithBaseURL(srv.URL), option.WithMaxRetries(0))
 }
 
 func sseEvent(w http.ResponseWriter, typ, data string) {
@@ -35,22 +35,22 @@ func TestStreamChatDeltasAndUsage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ch := make(chan streamEvent)
-	go clientFor(srv).streamChat(context.Background(), "m", nil, ch)
+	ch := make(chan StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", nil, ch)
 
 	var got string
 	var deltas int
 	for ev := range ch {
 		switch {
-		case ev.err != nil:
-			t.Fatalf("unexpected error: %v", ev.err)
-		case ev.done:
-			if ev.usage.InputTokens != 5 || ev.usage.OutputTokens != 3 {
-				t.Errorf("usage = %+v, want 5/3", ev.usage)
+		case ev.Err != nil:
+			t.Fatalf("unexpected error: %v", ev.Err)
+		case ev.Done:
+			if ev.Usage.InputTokens != 5 || ev.Usage.OutputTokens != 3 {
+				t.Errorf("usage = %+v, want 5/3", ev.Usage)
 			}
 		default:
 			deltas++
-			got += ev.delta
+			got += ev.Delta
 		}
 	}
 	if got != "Hello, world" || deltas != 3 {
@@ -66,12 +66,12 @@ func TestStreamChatAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ch := make(chan streamEvent)
-	go clientFor(srv).streamChat(context.Background(), "m", nil, ch)
+	ch := make(chan StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", nil, ch)
 
 	ev := <-ch
-	if ev.err == nil || ev.err.Error() != "openai: bad key" {
-		t.Errorf("err = %v, want openai: bad key", ev.err)
+	if ev.Err == nil || ev.Err.Error() != "openai: bad key" {
+		t.Errorf("err = %v, want openai: bad key", ev.Err)
 	}
 	if _, ok := <-ch; ok {
 		t.Error("channel not closed after error")
@@ -88,12 +88,12 @@ func TestStreamChatSendsImages(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	msgs := []apiMessage{{Role: "user", Content: "look", Images: [][]byte{{1, 2, 3}}}}
-	ch := make(chan streamEvent)
-	go clientFor(srv).streamChat(context.Background(), "m", msgs, ch)
+	msgs := []Message{{Role: "user", Content: "look", Images: [][]byte{{1, 2, 3}}}}
+	ch := make(chan StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", msgs, ch)
 	for ev := range ch {
-		if ev.err != nil {
-			t.Fatalf("unexpected error: %v", ev.err)
+		if ev.Err != nil {
+			t.Fatalf("unexpected error: %v", ev.Err)
 		}
 	}
 
@@ -115,12 +115,12 @@ func TestStreamChatFailedResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ch := make(chan streamEvent)
-	go clientFor(srv).streamChat(context.Background(), "m", nil, ch)
+	ch := make(chan StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", nil, ch)
 
 	ev := <-ch
-	if ev.err == nil || ev.err.Error() != "openai: boom" {
-		t.Errorf("err = %v, want openai: boom", ev.err)
+	if ev.Err == nil || ev.Err.Error() != "openai: boom" {
+		t.Errorf("err = %v, want openai: boom", ev.Err)
 	}
 	if _, ok := <-ch; ok {
 		t.Error("channel not closed after error")
@@ -141,20 +141,20 @@ func TestStreamChatCancel(t *testing.T) {
 	defer close(release)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan streamEvent)
+	ch := make(chan StreamEvent)
 	done := make(chan struct{})
 	go func() {
-		clientFor(srv).streamChat(ctx, "m", nil, ch)
+		clientFor(srv).StreamChat(ctx, "m", nil, ch)
 		close(done)
 	}()
 
-	if ev := <-ch; ev.delta != "partial" {
-		t.Fatalf("delta = %q, want partial", ev.delta)
+	if ev := <-ch; ev.Delta != "partial" {
+		t.Fatalf("delta = %q, want partial", ev.Delta)
 	}
 	cancel() // nobody reads ch anymore; goroutine must still exit
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("streamChat goroutine leaked after cancel")
+		t.Fatal("StreamChat goroutine leaked after cancel")
 	}
 }

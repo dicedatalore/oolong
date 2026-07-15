@@ -1,4 +1,4 @@
-package main
+package ui
 
 import (
 	"fmt"
@@ -7,7 +7,14 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/openai/openai-go/v3/option"
+
+	"github.com/mjcadz/oolong/internal/openai"
 )
+
+func clientFor(srv *httptest.Server) *openai.Client {
+	return openai.New("test", option.WithBaseURL(srv.URL), option.WithMaxRetries(0))
+}
 
 func TestChatMultilineInput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -16,7 +23,7 @@ func TestChatMultilineInput(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var model tea.Model = newAppModel(clientFor(srv), "dark")
+	var model tea.Model = New(clientFor(srv), "dark")
 	step := func(msg tea.Msg) {
 		model, _ = model.Update(msg)
 	}
@@ -24,7 +31,7 @@ func TestChatMultilineInput(t *testing.T) {
 	step(tea.WindowSizeMsg{Width: 80, Height: 24})
 	step(tea.KeyPressMsg{Code: tea.KeyEnter}) // pick the first model
 
-	am := model.(appModel)
+	am := model.(Model)
 	if am.state != stateChat {
 		t.Fatalf("state = %v, want stateChat", am.state)
 	}
@@ -35,7 +42,7 @@ func TestChatMultilineInput(t *testing.T) {
 	step(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
 	step(tea.KeyPressMsg{Code: 'y', Text: "y"})
 
-	am = model.(appModel)
+	am = model.(Model)
 	if got := am.input.Value(); got != "hi\ny" {
 		t.Fatalf("input after shift+enter = %q, want \"hi\\ny\"", got)
 	}
@@ -44,7 +51,7 @@ func TestChatMultilineInput(t *testing.T) {
 	}
 
 	step(tea.KeyPressMsg{Code: tea.KeyEnter}) // plain enter sends
-	am = model.(appModel)
+	am = model.(Model)
 	if !am.waiting {
 		t.Error("not waiting after send")
 	}

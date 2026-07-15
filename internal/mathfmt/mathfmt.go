@@ -1,4 +1,5 @@
-package main
+// Package mathfmt converts LaTeX math in markdown to plain Unicode text.
+package mathfmt
 
 import (
 	"strings"
@@ -6,11 +7,11 @@ import (
 	"unicode/utf8"
 )
 
-// renderMath replaces LaTeX math regions in assistant markdown with plain
+// Render replaces LaTeX math regions in assistant markdown with plain
 // Unicode text before the message reaches glamour, which would otherwise eat
 // the backslashes and show mangled LaTeX. Code blocks and inline code are
 // left untouched, and an unclosed delimiter passes through literally.
-func renderMath(markdown string) string {
+func Render(markdown string) string {
 	src := []rune(markdown)
 	n := len(src)
 	var out strings.Builder
@@ -46,7 +47,7 @@ func renderMath(markdown string) string {
 		case r == '\\' && i+1 < n && src[i+1] == '[':
 			end := indexSeq(src, i+2, `\]`)
 			if end >= 0 {
-				out.WriteString(displayBlock(latexToUnicode(string(src[i+2:end]))))
+				out.WriteString(displayBlock(latexToUnicode(string(src[i+2 : end]))))
 				i = end + 2
 				break
 			}
@@ -55,7 +56,7 @@ func renderMath(markdown string) string {
 		case r == '\\' && i+1 < n && src[i+1] == '(':
 			end := indexSeq(src, i+2, `\)`)
 			if end >= 0 {
-				out.WriteString(escapeMarkdown(latexToUnicode(string(src[i+2:end]))))
+				out.WriteString(escapeMarkdown(latexToUnicode(string(src[i+2 : end]))))
 				i = end + 2
 				break
 			}
@@ -64,7 +65,7 @@ func renderMath(markdown string) string {
 		case r == '$' && i+1 < n && src[i+1] == '$':
 			end := indexSeq(src, i+2, "$$")
 			if end >= 0 {
-				out.WriteString(displayBlock(latexToUnicode(string(src[i+2:end]))))
+				out.WriteString(displayBlock(latexToUnicode(string(src[i+2 : end]))))
 				i = end + 2
 				break
 			}
@@ -72,7 +73,7 @@ func renderMath(markdown string) string {
 			i += 2
 		case r == '$':
 			if end, ok := findInlineDollar(src, i); ok {
-				out.WriteString(escapeMarkdown(latexToUnicode(string(src[i+1:end]))))
+				out.WriteString(escapeMarkdown(latexToUnicode(string(src[i+1 : end]))))
 				i = end + 1
 				break
 			}

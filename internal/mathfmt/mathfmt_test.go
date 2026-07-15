@@ -1,4 +1,4 @@
-package main
+package mathfmt
 
 import (
 	"regexp"
@@ -103,8 +103,8 @@ func TestRenderMath(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := renderMath(c.in); got != c.want {
-			t.Errorf("%s: renderMath(%q) = %q, want %q", c.name, c.in, got, c.want)
+		if got := Render(c.in); got != c.want {
+			t.Errorf("%s: Render(%q) = %q, want %q", c.name, c.in, got, c.want)
 		}
 	}
 }
@@ -121,7 +121,7 @@ func TestRenderMathThroughGlamour(t *testing.T) {
 	if err != nil {
 		t.Fatalf("building renderer: %v", err)
 	}
-	rendered, err := renderer.Render(renderMath(reply))
+	rendered, err := renderer.Render(Render(reply))
 	if err != nil {
 		t.Fatalf("rendering: %v", err)
 	}

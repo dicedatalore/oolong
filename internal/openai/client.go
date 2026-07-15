@@ -1,4 +1,5 @@
-package main
+// Package openai wraps the OpenAI SDK in a minimal streaming chat client.
+package openai
 
 import (
 	"context"
@@ -9,52 +10,52 @@ import (
 	"strings"
 	"time"
 
-	openai "github.com/openai/openai-go/v3"
+	sdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 )
 
-type openaiClient struct {
-	api openai.Client
+type Client struct {
+	api sdk.Client
 }
 
-func newOpenAIClient(apiKey string, opts ...option.RequestOption) *openaiClient {
+func New(apiKey string, opts ...option.RequestOption) *Client {
 	opts = append([]option.RequestOption{
 		option.WithAPIKey(apiKey),
 		option.WithRequestTimeout(2 * time.Minute),
 	}, opts...)
-	return &openaiClient{api: openai.NewClient(opts...)}
+	return &Client{api: sdk.NewClient(opts...)}
 }
 
-type apiMessage struct {
+type Message struct {
 	Role    string
 	Content string
 	Images  [][]byte // PNG-encoded attachments, user messages only
 }
 
-type apiUsage struct {
+type Usage struct {
 	InputTokens  int
 	OutputTokens int
 }
 
-// streamEvent is one item of a streamed reply: a content delta, a terminal
+// StreamEvent is one item of a streamed reply: a content delta, a terminal
 // done event carrying usage, or a terminal error.
-type streamEvent struct {
-	delta string
-	usage apiUsage
-	done  bool
-	err   error
+type StreamEvent struct {
+	Delta string
+	Usage Usage
+	Done  bool
+	Err   error
 }
 
-// streamChat streams a model response, sending one streamEvent per content
+// StreamChat streams a model response, sending one StreamEvent per content
 // delta on ch, terminated by a done or err event. It closes ch on return and
 // aborts (without a terminal event) if ctx is cancelled.
-func (c *openaiClient) streamChat(ctx context.Context, model string, messages []apiMessage, ch chan<- streamEvent) {
+func (c *Client) StreamChat(ctx context.Context, model string, messages []Message, ch chan<- StreamEvent) {
 	defer close(ch)
 
-	emit := func(ev streamEvent) bool {
+	emit := func(ev StreamEvent) bool {
 		select {
 		case ch <- ev:
 			return true
@@ -87,20 +88,20 @@ func (c *openaiClient) streamChat(ctx context.Context, model string, messages []
 		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: input},
 		// The Responses API stores responses by default; this client keeps
 		// history locally, so opt out.
-		Store: openai.Bool(false),
+		Store: sdk.Bool(false),
 	})
 	defer stream.Close()
 
-	var usage apiUsage
+	var usage Usage
 	for stream.Next() {
 		ev := stream.Current()
 		switch ev.Type {
 		case "response.output_text.delta":
-			if ev.Delta != "" && !emit(streamEvent{delta: ev.Delta}) {
+			if ev.Delta != "" && !emit(StreamEvent{Delta: ev.Delta}) {
 				return
 			}
 		case "response.completed":
-			usage = apiUsage{
+			usage = Usage{
 				InputTokens:  int(ev.Response.Usage.InputTokens),
 				OutputTokens: int(ev.Response.Usage.OutputTokens),
 			}
@@ -109,24 +110,24 @@ func (c *openaiClient) streamChat(ctx context.Context, model string, messages []
 			if msg == "" {
 				msg = "response " + strings.TrimPrefix(ev.Type, "response.")
 			}
-			emit(streamEvent{err: fmt.Errorf("openai: %s", msg)})
+			emit(StreamEvent{Err: fmt.Errorf("openai: %s", msg)})
 			return
 		case "error":
-			emit(streamEvent{err: fmt.Errorf("openai: %s", ev.Message)})
+			emit(StreamEvent{Err: fmt.Errorf("openai: %s", ev.Message)})
 			return
 		}
 	}
 	if err := stream.Err(); err != nil {
-		emit(streamEvent{err: apiError(err)})
+		emit(StreamEvent{Err: apiError(err)})
 		return
 	}
-	emit(streamEvent{done: true, usage: usage})
+	emit(StreamEvent{Done: true, Usage: usage})
 }
 
 // apiError reduces the SDK's verbose API error (method, URL, raw body) to
 // just the server's message, which is what the UI shows.
 func apiError(err error) error {
-	var apierr *openai.Error
+	var apierr *sdk.Error
 	if errors.As(err, &apierr) {
 		if apierr.Message != "" {
 			return fmt.Errorf("openai: %s", apierr.Message)
@@ -136,16 +137,16 @@ func apiError(err error) error {
 	return err
 }
 
-// validateAPIKey checks the key against the models endpoint, which is free
+// ValidateKey checks the key against the models endpoint, which is free
 // and spends no tokens. The API's own 401 message can echo the key back, so
 // it is replaced with a generic error.
-func validateAPIKey(key string) error {
+func ValidateKey(key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	client := openai.NewClient(option.WithAPIKey(key))
+	client := sdk.NewClient(option.WithAPIKey(key))
 	_, err := client.Models.List(ctx)
-	var apierr *openai.Error
+	var apierr *sdk.Error
 	if errors.As(err, &apierr) {
 		if apierr.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("invalid API key")
