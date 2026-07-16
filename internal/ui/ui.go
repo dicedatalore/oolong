@@ -169,10 +169,10 @@ type Model struct {
 // window is too narrow for the wordmark to fit without wrapping.
 func (m Model) pickerLogo() string {
 	contentWidth := m.width - pageStyle.GetHorizontalFrameSize()
-	if contentWidth < lipgloss.Width(logoRows[0])+headerBarStyle.GetHorizontalFrameSize() {
+	if contentWidth < lipgloss.Width(logoRows[0]) {
 		return ""
 	}
-	return headerBarStyle.Render(m.logo)
+	return m.logo
 }
 
 func New(client *openai.Client, mdStyle string) Model {
@@ -191,6 +191,9 @@ func New(client *openai.Client, mdStyle string) Model {
 	picker.Styles.Title = headerStyle
 	picker.Styles.ActivePaginationDot = picker.Styles.ActivePaginationDot.Foreground(peach)
 	picker.SetShowStatusBar(false)
+	// Help renders separately in View so the list block can be centered
+	// while the command bar stays pinned to the bottom of the window.
+	picker.SetShowHelp(false)
 	picker.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("ctrl+k"), key.WithHelp("ctrl+k", "drop API key")),
@@ -345,14 +348,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		pickerHeight := msg.Height - pageStyle.GetVerticalFrameSize()
+		m.help.SetWidth(msg.Width - pageStyle.GetHorizontalFrameSize())
+		// Reserve a line for the bottom command bar plus a gap above it,
+		// and room for the logo (with a gap below) when it fits.
+		pickerHeight := msg.Height - pageStyle.GetVerticalFrameSize() - 2
 		if logo := m.pickerLogo(); logo != "" {
-			pickerHeight -= lipgloss.Height(logo)
+			pickerHeight -= lipgloss.Height(logo) + 1
 		}
 		m.picker.SetSize(
 			msg.Width-pageStyle.GetHorizontalFrameSize(),
 			pickerHeight,
 		)
+		// SetSize stretches the filter input to the list's full width, which
+		// makes the centered block span the whole window while filtering.
+		// Cap it so the filter row stays about as wide as the list items.
+		m.picker.FilterInput.SetWidth(20)
 		if m.state == stateChat {
 			m.layoutChat()
 		}
@@ -601,14 +611,30 @@ func (m Model) View() tea.View {
 
 	switch m.state {
 	case statePicker:
-		view := m.picker.View()
+		contentWidth := m.width - pageStyle.GetHorizontalFrameSize()
+		contentHeight := m.height - pageStyle.GetVerticalFrameSize()
+
+		// The list pads itself to its set height; trim that so the block
+		// centers on its actual content.
+		view := strings.TrimRight(m.picker.View(), " \n")
 		if logo := m.pickerLogo(); logo != "" {
-			view = logo + "\n" + view
+			view = logo + "\n\n" + view
 		}
+		// Pad every line to the block's width so Place centers the block as
+		// a unit; otherwise it centers each line individually and the list's
+		// left edge no longer lines up.
+		view = lipgloss.NewStyle().Width(lipgloss.Width(view)).Render(view)
+
+		bottomBar := m.help.View(m.picker)
 		if m.keyNotice != "" {
-			view += "\n" + bottomBarStyle.Render(helpStyle.Render(m.keyNotice))
+			bottomBar = helpStyle.Render(m.keyNotice) + "\n" + bottomBar
 		}
-		v.SetContent(pageStyle.Render(view))
+		bottomBarHeight := lipgloss.Height(bottomBar)
+
+		centered := lipgloss.Place(contentWidth, contentHeight-bottomBarHeight,
+			lipgloss.Center, lipgloss.Center, view)
+		v.SetContent(pageStyle.Render(centered + "\n" +
+			lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, bottomBar)))
 	case stateKeyEntry:
 		header := headerBarStyle.Render(headerStyle.Render("OpenAI API key"))
 		bottomBar := helpStyle.Render("enter: save to keychain • esc: quit")

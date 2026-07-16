@@ -80,7 +80,7 @@ func renderLogoHeader() string {
 	// The tagline splits across two lines so it fits the wordmark's width,
 	// with the second half right-aligned as a sign-off.
 	tagline := lipgloss.NewStyle().Italic(true).Foreground(peachDim).
-		Render("ephemeral chat tui")
+		Render("simple ephemeral chat")
 	motto := lipgloss.NewStyle().Italic(true).Foreground(purple).
 		Render("- all is lost")
 	rows = append(rows, tagline,
