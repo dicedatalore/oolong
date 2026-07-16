@@ -4,6 +4,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -86,6 +87,22 @@ type modelItem struct {
 func (m modelItem) Title() string       { return m.id }
 func (m modelItem) Description() string { return m.desc }
 func (m modelItem) FilterValue() string { return m.id }
+
+// newModelItem appends the model's token costs to its description.
+func newModelItem(id, desc string) modelItem {
+	if r, ok := rates[id]; ok {
+		desc += fmt.Sprintf(" • %s in / %s out per 1M tokens", price(r.input), price(r.output))
+	}
+	return modelItem{id: id, desc: desc}
+}
+
+// price formats a USD rate, dropping the cents when they are zero.
+func price(v float64) string {
+	if v == math.Trunc(v) {
+		return fmt.Sprintf("$%.0f", v)
+	}
+	return fmt.Sprintf("$%.2f", v)
+}
 
 type chatKeyMap struct {
 	Send      key.Binding
@@ -204,9 +221,9 @@ func (m Model) pickerLogo() string {
 
 func New(client *openai.Client, mdStyle string) Model {
 	items := []list.Item{
-		modelItem{id: "gpt-5.6-luna", desc: "For cost-sensitive workloads"},
-		modelItem{id: "gpt-5.6-terra", desc: "Balances intelligence and cost"},
-		modelItem{id: "gpt-5.6-sol", desc: "For complex professional work"},
+		newModelItem("gpt-5.6-luna", "For cost-sensitive workloads"),
+		newModelItem("gpt-5.6-terra", "Balances intelligence and cost"),
+		newModelItem("gpt-5.6-sol", "For complex professional work"),
 	}
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
