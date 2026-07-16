@@ -13,6 +13,7 @@ const appVersion = "v0.1.0"
 
 // logoRows spell OOLONG in a compact block font.
 var logoRows = []string{
+	"                             ",
 	"█▀▀█ █▀▀█ █    █▀▀█ █▄ █ █▀▀▀",
 	"█  █ █  █ █    █  █ █ ▀█ █ ▀█",
 	"▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀",
@@ -68,22 +69,17 @@ func gradientRow(s string) string {
 func renderLogoHeader() string {
 	width := lipgloss.Width(logoRows[0])
 
+	// The tagline sits on the left and the version on the right of the
+	// same line, above the wordmark.
+	tagline := lipgloss.NewStyle().Italic(true).Foreground(peachDim).
+		Render("simple ephemeral chat")
 	version := helpStyle.Render(appVersion)
-	label := strings.Repeat(" ", max(width-lipgloss.Width(version), 0)) + version
+	pad := max(width-lipgloss.Width(tagline)-lipgloss.Width(version), 1)
 
-	rows := []string{label}
+	rows := []string{tagline + strings.Repeat(" ", pad) + version}
 	for _, r := range logoRows {
 		rows = append(rows, gradientRow(r))
 	}
 	rows = append(rows, stripeRow(width))
-
-	// The tagline splits across two lines so it fits the wordmark's width,
-	// with the second half right-aligned as a sign-off.
-	tagline := lipgloss.NewStyle().Italic(true).Foreground(peachDim).
-		Render("simple ephemeral chat")
-	motto := lipgloss.NewStyle().Italic(true).Foreground(purple).
-		Render("- all is lost")
-	rows = append(rows, tagline,
-		strings.Repeat(" ", max(width-lipgloss.Width(motto), 0))+motto)
 	return strings.Join(rows, "\n")
 }

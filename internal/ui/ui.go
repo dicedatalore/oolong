@@ -4,6 +4,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -55,12 +56,17 @@ var (
 
 	userLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(peach)
 	botLabelStyle  = lipgloss.NewStyle().Bold(true).Foreground(purple)
-	userTextStyle  = lipgloss.NewStyle().PaddingLeft(2)
-	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	errorStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87"))
+	// User messages render in a peach-bordered block so they stand apart
+	// from the model's markdown output in long transcripts.
+	userBlockStyle = lipgloss.NewStyle().
+			Border(lipgloss.ThickBorder(), false, false, false, true).
+			BorderForeground(peach).
+			PaddingLeft(1)
+	helpStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87"))
 )
 
-// USD per 1M tokens. Placeholder values — update from https://openai.com/api/pricing
+// USD per 1M tokens. https://openai.com/api/pricing
 type modelRates struct {
 	input  float64
 	output float64
@@ -82,30 +88,46 @@ func (m modelItem) Description() string { return m.desc }
 func (m modelItem) FilterValue() string { return m.id }
 
 type chatKeyMap struct {
-	Send    key.Binding
-	NewLine key.Binding
-	Paste   key.Binding
-	Scroll  key.Binding
-	Back    key.Binding
-	Quit    key.Binding
+	Send      key.Binding
+	NewLine   key.Binding
+	Paste     key.Binding
+	Scroll    key.Binding
+	Jump      key.Binding
+	SysPrompt key.Binding
+	Save      key.Binding
+	Stop      key.Binding
+	Back      key.Binding
+	Quit      key.Binding
+	Help      key.Binding
 }
 
+// ShortHelp keeps the most used keys visible; everything else lives in the
+// full help behind "?".
 func (k chatKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Send, k.NewLine, k.Paste, k.Scroll, k.Back, k.Quit}
+	return []key.Binding{k.Send, k.NewLine, k.Back, k.Help}
 }
 
 func (k chatKeyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{k.ShortHelp()}
+	return [][]key.Binding{
+		{k.Send, k.NewLine, k.Paste, k.Scroll},
+		{k.Jump, k.Stop, k.SysPrompt, k.Save},
+		{k.Back, k.Quit, k.Help},
+	}
 }
 
 func newChatKeyMap() chatKeyMap {
 	return chatKeyMap{
-		Send:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
-		NewLine: key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"), key.WithHelp("shift+enter", "new line")),
-		Paste:   key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("ctrl+v", "paste text/image")),
-		Scroll:  key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "scroll")),
-		Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "change model")),
-		Quit:    key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
+		Send:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
+		NewLine:   key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"), key.WithHelp("shift+enter", "new line")),
+		Paste:     key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("ctrl+v", "paste")),
+		Scroll:    key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "scroll")),
+		Jump:      key.NewBinding(key.WithKeys("home", "end"), key.WithHelp("home/end", "top/bottom")),
+		SysPrompt: key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("ctrl+p", "system prompt")),
+		Save:      key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save chat")),
+		Stop:      key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc/ctrl+c", "stop")),
+		Back:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "change model")),
+		Quit:      key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
+		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "more")),
 	}
 }
 
@@ -151,6 +173,11 @@ type Model struct {
 	streaming     bool     // an in-progress assistant message is the last element of messages
 	pendingImages [][]byte // pasted images sent with the next message
 
+	systemPrompt  string
+	editingSystem bool   // the input textarea is editing the system prompt
+	draft         string // message draft stashed while editing the system prompt
+	chatNotice    string // transient status line in the chat bottom bar
+
 	inputTokens  int
 	outputTokens int
 
@@ -177,9 +204,9 @@ func (m Model) pickerLogo() string {
 
 func New(client *openai.Client, mdStyle string) Model {
 	items := []list.Item{
-		modelItem{id: "gpt-5.6-luna", desc: "Fast and lightweight"},
-		modelItem{id: "gpt-5.6-terra", desc: "Balanced speed and capability"},
-		modelItem{id: "gpt-5.6-sol", desc: "Most capable"},
+		modelItem{id: "gpt-5.6-luna", desc: "For cost-sensitive workloads"},
+		modelItem{id: "gpt-5.6-terra", desc: "Balances intelligence and cost"},
+		modelItem{id: "gpt-5.6-sol", desc: "For complex professional work"},
 	}
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
@@ -194,6 +221,12 @@ func New(client *openai.Client, mdStyle string) Model {
 	// Help renders separately in View so the list block can be centered
 	// while the command bar stays pinned to the bottom of the window.
 	picker.SetShowHelp(false)
+	// The picker has no full-help view, so drop "?" from its command bar.
+	// A keyless binding stays disabled even when the list re-evaluates its
+	// keybindings; SetEnabled(false) alone would be undone on every update.
+	picker.KeyMap.ShowFullHelp = key.NewBinding()
+	picker.KeyMap.CloseFullHelp = key.NewBinding()
+	picker.KeyMap.Quit = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "quit"))
 	picker.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("ctrl+k"), key.WithHelp("ctrl+k", "drop API key")),
@@ -264,11 +297,18 @@ func (m *Model) layoutChat() {
 	if len(m.pendingImages) > 0 {
 		inputHeight++ // attachment indicator line above the input
 	}
-	bottomBarHeight := 1 + bottomBarStyle.GetVerticalFrameSize()
+	if m.editingSystem {
+		inputHeight++ // system prompt indicator line above the input
+	}
+	m.help.SetWidth(contentWidth - bottomBarStyle.GetHorizontalFrameSize())
+	helpHeight := 1
+	if m.help.ShowAll {
+		helpHeight = lipgloss.Height(m.help.View(m.keys))
+	}
+	bottomBarHeight := helpHeight + bottomBarStyle.GetVerticalFrameSize()
 	m.vp.SetWidth(contentWidth)
 	m.vp.SetHeight(contentHeight - headerHeight - inputHeight - bottomBarHeight)
 	m.input.SetWidth(contentWidth - inputRowStyle.GetHorizontalFrameSize() - 4)
-	m.help.SetWidth(contentWidth - bottomBarStyle.GetHorizontalFrameSize())
 
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle(m.mdStyle),
@@ -287,14 +327,15 @@ func (m *Model) conversationView() string {
 	var b strings.Builder
 	for _, msg := range m.messages {
 		if msg.Role == "user" {
-			b.WriteString(userLabelStyle.Render("You") + "\n")
+			var block strings.Builder
+			block.WriteString(userLabelStyle.Render("You"))
 			if n := len(msg.Images); n > 0 {
-				b.WriteString(userTextStyle.Render(helpStyle.Render(imageLabel(n))) + "\n")
+				block.WriteString("\n" + helpStyle.Render(imageLabel(n)))
 			}
 			if msg.Content != "" {
-				b.WriteString(userTextStyle.Width(m.vp.Width()-2).Render(msg.Content) + "\n")
+				block.WriteString("\n" + msg.Content)
 			}
-			b.WriteString("\n")
+			b.WriteString(userBlockStyle.Width(m.vp.Width()-4).Render(block.String()) + "\n\n")
 			continue
 		}
 		b.WriteString(botLabelStyle.Render(m.chosen) + "\n")
@@ -310,8 +351,11 @@ func (m *Model) conversationView() string {
 }
 
 func (m *Model) startStream() tea.Cmd {
-	history := make([]openai.Message, len(m.messages))
-	copy(history, m.messages)
+	history := make([]openai.Message, 0, len(m.messages)+1)
+	if m.systemPrompt != "" {
+		history = append(history, openai.Message{Role: "system", Content: m.systemPrompt})
+	}
+	history = append(history, m.messages...)
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan openai.StreamEvent)
 	m.stream = ch
@@ -370,6 +414,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
+			// While a response is in flight, ctrl+c stops the stream and
+			// returns to the input bar rather than exiting.
+			if m.state == stateChat && m.waiting {
+				m.finishStream()
+				return m, nil
+			}
 			return m, tea.Quit
 		}
 
@@ -459,7 +509,7 @@ func (m Model) updateKeyEntry(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch key.String() {
-		case "esc":
+		case "esc", "ctrl+c":
 			return m, tea.Quit
 		case "enter":
 			k := strings.TrimSpace(m.keyInput.Value())
@@ -482,7 +532,7 @@ func (m Model) updateKeyEntry(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok && m.picker.FilterState() != list.Filtering {
 		switch key.String() {
-		case "q", "esc":
+		case "esc", "ctrl+c":
 			return m, tea.Quit
 		case "ctrl+k":
 			keystore.Delete()
@@ -516,18 +566,66 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
+		if m.editingSystem {
+			return m.updateSystemPrompt(key)
+		}
 		switch key.String() {
 		case "esc":
+			// While a response is in flight, esc stops the stream and
+			// returns to the input bar; otherwise it leaves the chat.
+			if m.waiting {
+				m.finishStream()
+				return m, nil
+			}
 			m.finishStream()
 			m.state = statePicker
 			m.messages = nil
 			m.errText = ""
+			m.chatNotice = ""
 			m.inputTokens = 0
 			m.outputTokens = 0
 			m.pendingImages = nil
 			m.input.Blur()
 			m.sparkleTag++
 			return m, sparkleTick(m.sparkleTag)
+		case "ctrl+p":
+			if m.waiting {
+				return m, nil
+			}
+			m.editingSystem = true
+			m.draft = m.input.Value()
+			m.input.SetValue(m.systemPrompt)
+			m.input.Placeholder = "You are a helpful assistant…"
+			m.chatNotice = ""
+			m.help.ShowAll = false
+			m.layoutChat()
+			return m, nil
+		case "ctrl+s":
+			m.help.ShowAll = false
+			if len(m.messages) == 0 {
+				m.chatNotice = "nothing to save yet"
+			} else if name, err := m.saveTranscript(); err != nil {
+				m.errText = "save failed: " + err.Error()
+			} else {
+				m.chatNotice = "saved " + name
+			}
+			m.layoutChat()
+			return m, nil
+		case "home":
+			m.vp.GotoTop()
+			return m, nil
+		case "end":
+			m.vp.GotoBottom()
+			return m, nil
+		case "?":
+			// "?" toggles the full help, but only when the input is empty;
+			// otherwise it is just a character being typed.
+			if !m.waiting && strings.TrimSpace(m.input.Value()) == "" {
+				m.help.ShowAll = !m.help.ShowAll
+				m.chatNotice = ""
+				m.layoutChat()
+				return m, nil
+			}
 		case "ctrl+v":
 			// An image on the clipboard becomes an attachment; otherwise
 			// fall through and let the textarea paste it as text.
@@ -542,6 +640,8 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.errText = ""
+			m.chatNotice = ""
+			m.help.ShowAll = false
 			m.messages = append(m.messages, openai.Message{Role: "user", Content: text, Images: m.pendingImages})
 			m.pendingImages = nil
 			m.input.SetValue("")
@@ -574,6 +674,71 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.vp, cmd = m.vp.Update(msg)
 	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
+}
+
+// updateSystemPrompt handles keys while the input textarea is repurposed as
+// the system prompt editor: enter saves, esc cancels, and the stashed message
+// draft is restored either way.
+func (m Model) updateSystemPrompt(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		m.exitSystemPrompt()
+		return m, nil
+	case "enter":
+		m.systemPrompt = strings.TrimSpace(m.input.Value())
+		if m.systemPrompt == "" {
+			m.chatNotice = "system prompt cleared"
+		} else {
+			m.chatNotice = "system prompt set"
+		}
+		m.exitSystemPrompt()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	prevHeight := m.input.Height()
+	m.input, cmd = m.input.Update(key)
+	if m.input.Height() != prevHeight {
+		m.layoutChat()
+	}
+	return m, cmd
+}
+
+func (m *Model) exitSystemPrompt() {
+	m.editingSystem = false
+	m.input.SetValue(m.draft)
+	m.draft = ""
+	m.input.Placeholder = "Send a message…"
+	m.help.ShowAll = false
+	m.layoutChat()
+}
+
+// saveTranscript writes the conversation as markdown to a timestamped file in
+// the working directory and returns the file name.
+func (m Model) saveTranscript() (string, error) {
+	name := fmt.Sprintf("oolong-chat-%s.md", time.Now().Format("2006-01-02-150405"))
+	return name, os.WriteFile(name, []byte(m.transcriptMarkdown()), 0o644)
+}
+
+func (m Model) transcriptMarkdown() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Oolong chat — %s\n\n_%s_\n\n", m.chosen, time.Now().Format("2006-01-02 15:04"))
+	if m.systemPrompt != "" {
+		fmt.Fprintf(&b, "**System prompt:** %s\n\n", m.systemPrompt)
+	}
+	for _, msg := range m.messages {
+		if msg.Role == "user" {
+			b.WriteString("## You\n\n")
+			if n := len(msg.Images); n > 0 {
+				fmt.Fprintf(&b, "_%s_\n\n", imageLabel(n))
+			}
+			if msg.Content != "" {
+				fmt.Fprintf(&b, "%s\n\n", msg.Content)
+			}
+			continue
+		}
+		fmt.Fprintf(&b, "## %s\n\n%s\n\n", m.chosen, msg.Content)
+	}
+	return b.String()
 }
 
 func (m Model) sessionCost() float64 {
@@ -649,9 +814,18 @@ func (m Model) View() tea.View {
 	case stateChat:
 		cost := fmt.Sprintf("~$%.4f • %s in / %s out",
 			m.sessionCost(), formatTokens(m.inputTokens), formatTokens(m.outputTokens))
+		if m.systemPrompt != "" {
+			cost += " • system prompt"
+		}
 		header := headerBarStyle.Render(headerStyle.Render(m.chosen) + helpStyle.Render("  "+cost))
 
 		bottomBar := m.help.View(m.keys)
+		if m.editingSystem {
+			bottomBar = helpStyle.Render("enter save • esc cancel • empty prompt clears")
+		}
+		if m.chatNotice != "" {
+			bottomBar = helpStyle.Render(m.chatNotice)
+		}
 		if m.waiting {
 			label := "thinking…"
 			if m.streaming {
@@ -665,6 +839,10 @@ func (m Model) View() tea.View {
 		bottomBar = bottomBarStyle.Render(bottomBar)
 
 		inputArea := inputRowStyle.Render(m.input.View())
+		if m.editingSystem {
+			inputArea = inputRowStyle.Render(botLabelStyle.Render("System prompt")) +
+				"\n" + inputArea
+		}
 		if n := len(m.pendingImages); n > 0 {
 			inputArea = inputRowStyle.Render(helpStyle.Render(imageLabel(n)+" — sent with next message")) +
 				"\n" + inputArea
