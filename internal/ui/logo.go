@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-)
 
-const appVersion = "v0.1.0"
+	"github.com/dicedatalore/oolong/internal/version"
+)
 
 // logoRows spell OOLONG in a compact block font.
 var logoRows = []string{
@@ -72,10 +72,10 @@ func renderLogoHeader() string {
 	// same line, above the wordmark.
 	tagline := lipgloss.NewStyle().Italic(true).Foreground(peachDim).
 		Render("simple ephemeral chat")
-	version := helpStyle.Render(appVersion)
-	pad := max(width-lipgloss.Width(tagline)-lipgloss.Width(version), 1)
+	ver := helpStyle.Render(version.String())
+	pad := max(width-lipgloss.Width(tagline)-lipgloss.Width(ver), 1)
 
-	rows := []string{tagline + strings.Repeat(" ", pad) + version}
+	rows := []string{tagline + strings.Repeat(" ", pad) + ver}
 	for _, r := range logoRows {
 		rows = append(rows, gradientRow(r))
 	}

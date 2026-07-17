@@ -1,5 +1,6 @@
-# Built binary
+# Built binary and release artifacts
 /oolong
+/dist/
 
 # Saved chat transcripts
 oolong-chat-*.md

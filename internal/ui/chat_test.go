@@ -173,6 +173,48 @@ func TestEscLeavesChatAndResetsSession(t *testing.T) {
 	}
 }
 
+func TestConversationViewCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		for _, s := range []string{"Hello", " world"} {
+			fmt.Fprintf(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\n", s)
+			fl.Flush()
+		}
+		fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
+	}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model = typeText(model, "hi")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = pumpStream(t, model)
+
+	am := model.(Model)
+	if len(am.msgCache) != len(am.messages) {
+		t.Fatalf("cache has %d entries for %d messages", len(am.msgCache), len(am.messages))
+	}
+	cached := am.conversationView()
+	am.msgCache = nil
+	if fresh := am.conversationView(); cached != fresh {
+		t.Error("cached view differs from a fresh render")
+	}
+
+	// Resizing changes the render width, so cached blocks must be rebuilt.
+	before := am.msgCache[0]
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	am = model.(Model)
+	if am.msgCache[0] == before {
+		t.Error("resize did not re-render cached messages")
+	}
+
+	// Leaving the chat drops the cache with the transcript.
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if got := model.(Model).msgCache; got != nil {
+		t.Errorf("cache survived leaving the chat: %d entries", len(got))
+	}
+}
+
 func TestHelpToggle(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()

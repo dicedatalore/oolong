@@ -61,6 +61,7 @@ func (m Model) openChat(id string) (tea.Model, tea.Cmd) {
 // token counters, notices, and pending attachments.
 func (m *Model) resetChat() {
 	m.messages = nil
+	m.msgCache = nil
 	m.systemPrompt = ""
 	m.errText = ""
 	m.chatNotice = ""
@@ -100,39 +101,58 @@ func (m *Model) layoutChat() {
 	if err == nil {
 		m.renderer = renderer
 	}
+	// Rendered output only depends on the content width, so the cache
+	// survives layout changes that don't alter it (help toggle, input
+	// growth, notices).
+	if contentWidth != m.cacheWidth {
+		m.cacheWidth = contentWidth
+		m.msgCache = nil
+	}
 	m.vp.SetContent(m.conversationView())
 }
 
 // conversationView renders the whole transcript: user messages in bordered
-// blocks, assistant messages as glamour-rendered markdown.
+// blocks, assistant messages as glamour-rendered markdown. Completed
+// messages come from msgCache, so the per-delta cost while streaming stays
+// constant instead of growing with the transcript.
 func (m *Model) conversationView() string {
 	if len(m.messages) == 0 {
 		return helpStyle.Render("\n  Say something to get started.")
 	}
+	for i := len(m.msgCache); i < len(m.messages); i++ {
+		m.msgCache = append(m.msgCache, m.renderMessage(m.messages[i]))
+	}
+	if m.streaming {
+		last := len(m.messages) - 1
+		m.msgCache[last] = m.renderMessage(m.messages[last])
+	}
 	var b strings.Builder
-	for _, msg := range m.messages {
-		if msg.Role == "user" {
-			var block strings.Builder
-			block.WriteString(userLabelStyle.Render("You"))
-			if n := len(msg.Images); n > 0 {
-				block.WriteString("\n" + helpStyle.Render(imageLabel(n)))
-			}
-			if msg.Content != "" {
-				block.WriteString("\n" + msg.Content)
-			}
-			b.WriteString(userBlockStyle.Width(m.vp.Width()-4).Render(block.String()) + "\n\n")
-			continue
-		}
-		b.WriteString(botLabelStyle.Render(m.chosen) + "\n")
-		rendered := msg.Content
-		if m.renderer != nil {
-			if out, err := m.renderer.Render(mathfmt.Render(msg.Content)); err == nil {
-				rendered = out
-			}
-		}
-		b.WriteString(rendered + "\n")
+	for _, block := range m.msgCache {
+		b.WriteString(block)
 	}
 	return b.String()
+}
+
+// renderMessage renders one message to its on-screen block.
+func (m *Model) renderMessage(msg openai.Message) string {
+	if msg.Role == "user" {
+		var block strings.Builder
+		block.WriteString(userLabelStyle.Render("You"))
+		if n := len(msg.Images); n > 0 {
+			block.WriteString("\n" + helpStyle.Render(imageLabel(n)))
+		}
+		if msg.Content != "" {
+			block.WriteString("\n" + msg.Content)
+		}
+		return userBlockStyle.Width(m.vp.Width()-4).Render(block.String()) + "\n\n"
+	}
+	rendered := msg.Content
+	if m.renderer != nil {
+		if out, err := m.renderer.Render(mathfmt.Render(msg.Content)); err == nil {
+			rendered = out
+		}
+	}
+	return botLabelStyle.Render(m.chosen) + "\n" + rendered + "\n"
 }
 
 func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {

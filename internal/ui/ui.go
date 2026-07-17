@@ -71,8 +71,12 @@ type Model struct {
 	keys     chatKeyMap
 	renderer *glamour.TermRenderer // markdown renderer, rebuilt on resize
 	messages []openai.Message
-	waiting  bool // a request is in flight
-	errText  string
+	// msgCache[i] is messages[i] rendered at cacheWidth. Completed messages
+	// render once; only the streaming message re-renders per delta.
+	msgCache   []string
+	cacheWidth int
+	waiting    bool // a request is in flight
+	errText    string
 
 	// in-flight response stream (see stream.go)
 	stream        <-chan openai.StreamEvent

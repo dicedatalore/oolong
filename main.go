@@ -12,11 +12,17 @@ import (
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/openai"
 	"github.com/dicedatalore/oolong/internal/ui"
+	"github.com/dicedatalore/oolong/internal/version"
 )
 
 func main() {
 	resetKey := flag.Bool("reset-key", false, "delete the stored OpenAI API key from the OS keychain and exit")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("oolong " + version.String())
+		return
+	}
 	if *resetKey {
 		if err := keystore.Delete(); err != nil {
 			fmt.Fprintf(os.Stderr, "reset-key: %v\n", err)

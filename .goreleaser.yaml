@@ -1,0 +1,71 @@
+version: 2
+
+project_name: oolong
+
+builds:
+  # Native darwin/arm64 build with cgo so clipboard image paste works; the
+  # release workflow runs on a macOS arm64 runner.
+  - id: macos
+    binary: oolong
+    env:
+      - CGO_ENABLED=1
+    goos: [darwin]
+    goarch: [arm64]
+    ldflags:
+      - -s -w -X github.com/dicedatalore/oolong/internal/version.Version=v{{ .Version }}
+  # Cross-compiled portable builds; without cgo, image paste degrades to
+  # text paste (internal/clipboard has a !cgo stub).
+  - id: portable
+    binary: oolong
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: darwin
+        goarch: arm64 # covered by the cgo build above
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/dicedatalore/oolong/internal/version.Version=v{{ .Version }}
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^test:"
+
+homebrew_casks:
+  - name: oolong
+    repository:
+      owner: dicedatalore
+      name: homebrew-tap
+    homepage: https://github.com/dicedatalore/oolong
+    description: Simple ephemeral chat with OpenAI models in your terminal
+    license: MIT
+    # The binaries are not notarized, so clear the quarantine flag on install.
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/oolong"]
+          end
+    # Publishing the cask needs the homebrew-tap repo to exist and a
+    # TAP_GITHUB_TOKEN secret (a PAT with push access to it) exported as
+    # GITHUB_TOKEN for this step. Flip to false at public launch.
+    skip_upload: true

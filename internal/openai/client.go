@@ -22,10 +22,10 @@ type Client struct {
 }
 
 func New(apiKey string, opts ...option.RequestOption) *Client {
-	opts = append([]option.RequestOption{
-		option.WithAPIKey(apiKey),
-		option.WithRequestTimeout(2 * time.Minute),
-	}, opts...)
+	// No request timeout: it would bound the whole request including the
+	// streamed body, cutting off long responses mid-stream. The user can
+	// always stop a stuck stream, which cancels the request context.
+	opts = append([]option.RequestOption{option.WithAPIKey(apiKey)}, opts...)
 	return &Client{api: sdk.NewClient(opts...)}
 }
 

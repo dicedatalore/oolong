@@ -7,7 +7,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -15,8 +19,10 @@ jobs:
           go-version-file: go.mod
       # golang.design/x/clipboard needs the X11 headers on Linux.
       - name: Install X11 headers
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libx11-dev
       - name: gofmt
+        if: runner.os == 'Linux'
         run: test -z "$(gofmt -l .)"
       - run: go build ./...
       - run: go vet ./...

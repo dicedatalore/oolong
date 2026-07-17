@@ -1,3 +1,5 @@
+//go:build cgo
+
 // Package clipboard reads image attachments from the system clipboard.
 package clipboard
 
