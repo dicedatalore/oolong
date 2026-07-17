@@ -1,5 +1,7 @@
 # Oolong 🍵
 
+[![CI](https://github.com/dicedatalore/oolong/actions/workflows/ci.yml/badge.svg)](https://github.com/dicedatalore/oolong/actions/workflows/ci.yml)
+
 **Simple ephemeral chat** — a fast, keyboard-driven terminal client for OpenAI models, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 Conversations live in your terminal and nowhere else. Nothing is written to disk unless you explicitly save a transcript, and Oolong opts out of OpenAI's server-side response storage. Close the window and the chat is gone.
