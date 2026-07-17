@@ -4,6 +4,8 @@
 
 Conversations live in your terminal and nowhere else. Nothing is written to disk unless you explicitly save a transcript, and Oolong opts out of OpenAI's server-side response storage. Close the window and the chat is gone.
 
+![oolong demo](./demo/demo.gif)
+
 ## Features
 
 - **Streaming responses** rendered as markdown with syntax-highlighted code blocks
