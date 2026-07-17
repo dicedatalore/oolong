@@ -1,1 +1,8 @@
-oolong
+# Built binary
+/oolong
+
+# Saved chat transcripts
+oolong-chat-*.md
+
+# Local editor/tool settings
+.claude/settings.local.json
