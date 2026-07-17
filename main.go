@@ -9,9 +9,9 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/muesli/termenv"
 
-	"github.com/mjcadz/oolong/internal/keystore"
-	"github.com/mjcadz/oolong/internal/openai"
-	"github.com/mjcadz/oolong/internal/ui"
+	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/ui"
 )
 
 func main() {

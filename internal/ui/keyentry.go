@@ -10,8 +10,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/mjcadz/oolong/internal/keystore"
-	"github.com/mjcadz/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 // keyCheckMsg carries the result of validating an entered API key.

@@ -1,4 +1,4 @@
-module github.com/mjcadz/oolong
+module github.com/dicedatalore/oolong
 
 go 1.26.5
 

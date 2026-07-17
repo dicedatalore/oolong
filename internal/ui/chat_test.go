@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/mjcadz/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 func TestChatMultilineInput(t *testing.T) {

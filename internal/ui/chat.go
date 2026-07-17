@@ -15,9 +15,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
-	"github.com/mjcadz/oolong/internal/clipboard"
-	"github.com/mjcadz/oolong/internal/mathfmt"
-	"github.com/mjcadz/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/clipboard"
+	"github.com/dicedatalore/oolong/internal/mathfmt"
+	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 func newChatInput() textarea.Model {

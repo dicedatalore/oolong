@@ -11,7 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/openai/openai-go/v3/option"
 
-	"github.com/mjcadz/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 // clientFor returns a client that talks to the fake server instead of the

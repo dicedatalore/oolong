@@ -38,7 +38,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
-	"github.com/mjcadz/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 // sessionState selects which screen is active.

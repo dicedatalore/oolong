@@ -14,7 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/mjcadz/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/keystore"
 )
 
 // USD per 1M tokens. https://openai.com/api/pricing
