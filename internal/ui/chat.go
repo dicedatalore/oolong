@@ -39,6 +39,8 @@ func newChatInput() textarea.Model {
 	// the view. Drop it so the input row matches the surrounding bg.
 	inputStyles := input.Styles()
 	inputStyles.Focused.CursorLine = inputStyles.Focused.CursorLine.Background(lipgloss.NoColor{})
+	inputStyles.Focused.Prompt = inputStyles.Focused.Prompt.Foreground(peach)
+	inputStyles.Cursor.Color = peach
 	input.SetStyles(inputStyles)
 	return input
 }
@@ -321,9 +323,9 @@ func (m Model) viewChat() string {
 		bottomBar = helpStyle.Render(m.chatNotice)
 	}
 	if m.waiting {
-		label := "thinking…"
+		label := " thinking…"
 		if m.streaming {
-			label = "streaming…"
+			label = " streaming…"
 		}
 		bottomBar = m.spin.View() + helpStyle.Render(label)
 	}
