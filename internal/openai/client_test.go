@@ -36,7 +36,7 @@ func TestStreamChatDeltasAndUsage(t *testing.T) {
 	defer srv.Close()
 
 	ch := make(chan StreamEvent)
-	go clientFor(srv).StreamChat(context.Background(), "m", nil, ch)
+	go clientFor(srv).StreamChat(context.Background(), "m", nil, Options{}, ch)
 
 	var got string
 	var deltas int
@@ -67,7 +67,7 @@ func TestStreamChatAPIError(t *testing.T) {
 	defer srv.Close()
 
 	ch := make(chan StreamEvent)
-	go clientFor(srv).StreamChat(context.Background(), "m", nil, ch)
+	go clientFor(srv).StreamChat(context.Background(), "m", nil, Options{}, ch)
 
 	ev := <-ch
 	if ev.Err == nil || ev.Err.Error() != "openai: bad key" {
@@ -90,7 +90,7 @@ func TestStreamChatSendsImages(t *testing.T) {
 
 	msgs := []Message{{Role: "user", Content: "look", Images: [][]byte{{1, 2, 3}}}}
 	ch := make(chan StreamEvent)
-	go clientFor(srv).StreamChat(context.Background(), "m", msgs, ch)
+	go clientFor(srv).StreamChat(context.Background(), "m", msgs, Options{}, ch)
 	for ev := range ch {
 		if ev.Err != nil {
 			t.Fatalf("unexpected error: %v", ev.Err)
@@ -107,6 +107,62 @@ func TestStreamChatSendsImages(t *testing.T) {
 	}
 }
 
+func TestStreamChatSendsOptions(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		sseEvent(w, "response.completed",
+			`{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	}))
+	defer srv.Close()
+
+	drain := func(opts Options) string {
+		ch := make(chan StreamEvent)
+		go clientFor(srv).StreamChat(context.Background(), "m", nil, opts, ch)
+		for ev := range ch {
+			if ev.Err != nil {
+				t.Fatalf("unexpected error: %v", ev.Err)
+			}
+		}
+		return string(body)
+	}
+
+	got := drain(Options{ReasoningEffort: "high", Verbosity: "low"})
+	for _, want := range []string{
+		`"reasoning":{"effort":"high"}`,
+		`"text":{"verbosity":"low"}`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("request body missing %s:\n%s", want, got)
+		}
+	}
+
+	// Zero options must omit the parameters, leaving the server defaults.
+	got = drain(Options{})
+	for _, banned := range []string{`"reasoning"`, `"verbosity"`} {
+		if strings.Contains(got, banned) {
+			t.Errorf("request body has %s despite zero options:\n%s", banned, got)
+		}
+	}
+}
+
+func TestListModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"object":"list","data":[{"id":"gpt-5.4","object":"model","created":1,"owned_by":"openai"},{"id":"gpt-5.6-terra","object":"model","created":1,"owned_by":"openai"}]}`)
+	}))
+	defer srv.Close()
+
+	ids, err := clientFor(srv).ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels() error = %v", err)
+	}
+	if len(ids) != 2 || !ids["gpt-5.4"] || !ids["gpt-5.6-terra"] {
+		t.Errorf("ListModels() = %v, want gpt-5.4 and gpt-5.6-terra", ids)
+	}
+}
+
 func TestStreamChatFailedResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -116,7 +172,7 @@ func TestStreamChatFailedResponse(t *testing.T) {
 	defer srv.Close()
 
 	ch := make(chan StreamEvent)
-	go clientFor(srv).StreamChat(context.Background(), "m", nil, ch)
+	go clientFor(srv).StreamChat(context.Background(), "m", nil, Options{}, ch)
 
 	ev := <-ch
 	if ev.Err == nil || ev.Err.Error() != "openai: boom" {
@@ -144,7 +200,7 @@ func TestStreamChatCancel(t *testing.T) {
 	ch := make(chan StreamEvent)
 	done := make(chan struct{})
 	go func() {
-		clientFor(srv).StreamChat(ctx, "m", nil, ch)
+		clientFor(srv).StreamChat(ctx, "m", nil, Options{}, ch)
 		close(done)
 	}()
 

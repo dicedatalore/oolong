@@ -39,8 +39,22 @@ func (m *Model) startStream() tea.Cmd {
 	m.stream = ch
 	m.cancelStream = cancel
 	m.streaming = false
-	go m.client.StreamChat(ctx, m.chosen, history, ch)
+	opts := openai.Options{
+		ReasoningEffort: m.effectiveEffort(),
+		Verbosity:       m.modelConfig(m.chosen).Verbosity,
+	}
+	go m.client.StreamChat(ctx, m.chosen, history, opts, ch)
 	return readStream(ch)
+}
+
+// effectiveEffort resolves the reasoning effort for the next request: the
+// session override wins over the model's configured default; "" omits the
+// parameter, leaving the server default.
+func (m Model) effectiveEffort() string {
+	if m.effortOverride != "" {
+		return m.effortOverride
+	}
+	return m.modelConfig(m.chosen).ReasoningEffort
 }
 
 // readStream waits for the next event from the in-flight stream. It is
@@ -84,7 +98,7 @@ func (m *Model) settleStreamEstimate() {
 	in, out := m.streamEstimate()
 	m.inputTokens += in
 	m.outputTokens += out
-	if r, ok := rates[m.chosen]; ok {
+	if r, ok := m.rates[m.chosen]; ok {
 		m.costUSD += float64(in)/1e6*r.input + float64(out)/1e6*r.output
 	}
 }
@@ -118,7 +132,7 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 		m.finishStream()
 		m.inputTokens += msg.Usage.InputTokens
 		m.outputTokens += msg.Usage.OutputTokens
-		if r, ok := rates[m.chosen]; ok {
+		if r, ok := m.rates[m.chosen]; ok {
 			m.costUSD += float64(msg.Usage.InputTokens)/1e6*r.input +
 				float64(msg.Usage.OutputTokens)/1e6*r.output
 		}

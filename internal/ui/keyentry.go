@@ -83,7 +83,13 @@ func (m Model) handleKeyCheck(msg keyCheckMsg) (tea.Model, tea.Cmd) {
 	m.keyErr = ""
 	m.state = statePicker
 	m.sparkleTag++
-	return m, sparkleTick(m.sparkleTag)
+	cmd := sparkleTick(m.sparkleTag)
+	if m.pendingCatalog != nil {
+		// A custom catalog was waiting on this client for its
+		// availability check (see New).
+		cmd = tea.Batch(cmd, checkModels(m.client))
+	}
+	return m, cmd
 }
 
 // viewKeyEntry renders the masked key input with a status line underneath.

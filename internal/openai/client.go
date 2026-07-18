@@ -50,10 +50,17 @@ type StreamEvent struct {
 	Err   error
 }
 
+// Options tunes a StreamChat request. Zero values omit the parameter, which
+// leaves the server default in effect.
+type Options struct {
+	ReasoningEffort string // reasoning.effort: none|minimal|low|medium|high
+	Verbosity       string // text.verbosity: low|medium|high
+}
+
 // StreamChat streams a model response, sending one StreamEvent per content
 // delta on ch, terminated by a done or err event. It closes ch on return and
 // aborts (without a terminal event) if ctx is cancelled.
-func (c *Client) StreamChat(ctx context.Context, model string, messages []Message, ch chan<- StreamEvent) {
+func (c *Client) StreamChat(ctx context.Context, model string, messages []Message, opts Options, ch chan<- StreamEvent) {
 	defer close(ch)
 
 	emit := func(ev StreamEvent) bool {
@@ -84,13 +91,20 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []Messag
 		input = append(input, responses.ResponseInputItemParamOfMessage(content, role))
 	}
 
-	stream := c.api.Responses.NewStreaming(ctx, responses.ResponseNewParams{
+	params := responses.ResponseNewParams{
 		Model: shared.ResponsesModel(model),
 		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: input},
 		// The Responses API stores responses by default; this client keeps
 		// history locally, so opt out.
 		Store: sdk.Bool(false),
-	})
+	}
+	if opts.ReasoningEffort != "" {
+		params.Reasoning = shared.ReasoningParam{Effort: shared.ReasoningEffort(opts.ReasoningEffort)}
+	}
+	if opts.Verbosity != "" {
+		params.Text = responses.ResponseTextConfigParam{Verbosity: responses.ResponseTextConfigVerbosity(opts.Verbosity)}
+	}
+	stream := c.api.Responses.NewStreaming(ctx, params)
 	defer stream.Close()
 
 	var usage Usage
@@ -123,6 +137,20 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []Messag
 		return
 	}
 	emit(StreamEvent{Done: true, Usage: usage})
+}
+
+// ListModels returns the ids of the models available to the API key, for
+// checking a user-configured catalog before it is shown in the picker.
+func (c *Client) ListModels(ctx context.Context) (map[string]bool, error) {
+	ids := make(map[string]bool)
+	it := c.api.Models.ListAutoPaging(ctx)
+	for it.Next() {
+		ids[it.Current().ID] = true
+	}
+	if err := it.Err(); err != nil {
+		return nil, apiError(err)
+	}
+	return ids, nil
 }
 
 // apiError reduces the SDK's verbose API error (method, URL, raw body) to

@@ -38,6 +38,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
+	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
@@ -58,6 +59,13 @@ type Model struct {
 	state  sessionState
 	width  int
 	height int
+
+	// model catalog (from the config file, or the built-in list)
+	catalog        []config.Model
+	rates          map[string]modelRates
+	pendingCatalog []config.Model // custom catalog awaiting the availability check
+	pendingModel   string         // default_model to open once the first resize arrives
+	transcriptDir  string         // transcript_dir from config; the env var wins
 
 	// model picker
 	picker list.Model
@@ -90,6 +98,10 @@ type Model struct {
 	draft         string // message draft stashed while editing the system prompt
 	chatNotice    string // transient status line in the chat bottom bar
 
+	// session reasoning-effort override (ctrl+t); "" defers to the model's
+	// configured default, which in turn defers to the server default.
+	effortOverride string
+
 	// running totals for the cost estimate in the chat header; cost is
 	// accumulated per request at the rates of the model that served it,
 	// so it stays accurate when the model changes mid-chat. While a
@@ -115,21 +127,54 @@ type Model struct {
 }
 
 // New builds the initial model. A nil client (no stored API key yet) starts
-// the app on the key entry screen instead of the picker.
-func New(client *openai.Client, mdStyle string) Model {
+// the app on the key entry screen instead of the picker. cfgErr is a config
+// load problem to surface as a notice — a bad config never blocks launch.
+func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string) Model {
+	if cfg.Accent != "" {
+		// Before the widgets below copy the accent into their own styles.
+		applyAccent(cfg.Accent)
+	}
 	m := Model{
-		state:    statePicker,
-		picker:   newPicker(),
-		input:    newChatInput(),
-		keyInput: newKeyInput(),
-		spin:     newSpinner(),
-		help:     help.New(),
-		keys:     newChatKeyMap(),
-		mdStyle:  mdStyle,
-		client:   client,
-		logo:     renderLogoHeader(),
+		state:         statePicker,
+		picker:        newPicker(),
+		input:         newChatInput(),
+		keyInput:      newKeyInput(),
+		spin:          newSpinner(),
+		help:          help.New(),
+		keys:          newChatKeyMap(),
+		mdStyle:       mdStyle,
+		client:        client,
+		logo:          renderLogoHeader(),
+		transcriptDir: cfg.TranscriptDir,
 	}
 	m.initCmd = sparkleTick(0)
+	if cfg.CustomCatalog() {
+		// Config-supplied models show in the picker only once the API
+		// confirms they exist; the check starts now, or from handleKeyCheck
+		// when key entry has to supply the client first. The catalog itself
+		// is active immediately — default_model may open a chat that needs
+		// its rates and reasoning defaults before the check lands.
+		m.pendingCatalog = cfg.Catalog()
+		m.catalog = m.pendingCatalog
+		m.rates = ratesFrom(m.pendingCatalog)
+		m.keyNotice = "checking model availability…"
+		if client != nil {
+			m.initCmd = tea.Batch(m.initCmd, checkModels(client))
+		}
+	} else {
+		m.setCatalog(cfg.Catalog())
+	}
+	if cfg.DefaultModel != "" && client != nil {
+		// Skip the picker, but only once the first WindowSizeMsg supplies
+		// real dimensions — opening the chat now would lay out at zero size.
+		m.pendingModel = cfg.DefaultModel
+	}
+	if cfgErr != "" {
+		// keyNotice shows on the picker; chatNotice covers the
+		// default_model path that skips straight past it.
+		m.keyNotice = cfgErr
+		m.chatNotice = cfgErr
+	}
 	if client == nil {
 		m.state = stateKeyEntry
 		m.initCmd = m.keyInput.Focus()
@@ -173,6 +218,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case keyCheckMsg:
 		return m.handleKeyCheck(msg)
+
+	case modelsCheckMsg:
+		return m.handleModelsCheck(msg)
 
 	case spinner.TickMsg:
 		// Advance the spinner only while something is in flight; returning
@@ -219,6 +267,13 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.picker.FilterInput.SetWidth(20)
 	if m.state == stateChat {
 		m.layoutChat()
+	}
+	if m.pendingModel != "" && m.state == statePicker {
+		// default_model skips the picker: open its chat now that the
+		// window dimensions are known.
+		id := m.pendingModel
+		m.pendingModel = ""
+		return m.openChat(id)
 	}
 	return m, nil
 }

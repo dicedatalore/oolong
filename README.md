@@ -16,7 +16,8 @@ Conversations live in your terminal and nowhere else. Nothing is written to disk
 - **Mid-chat model switch** — `esc` back to the picker keeps the conversation, so you can escalate to a bigger model halfway through
 - **Image input** — paste an image from the clipboard (`ctrl+v`) and it's attached to your next message
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
-- **Transcript export** — `ctrl+s` saves the conversation as a timestamped markdown file, to the current directory or `OOLONG_TRANSCRIPT_DIR` if set
+- **Transcript export** — `ctrl+s` saves the conversation as a timestamped markdown file, to the current directory or a directory you configure
+- **Configurable** — an optional TOML config file sets a custom model catalog, a default model, reasoning effort and verbosity, transcript directory, and accent color
 - **Keychain storage** — your API key lives in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service), not in a dotfile
 - **Readable math** — LaTeX in responses is converted to plain Unicode instead of showing up as mangled backslashes
 
@@ -61,6 +62,29 @@ Prefer a standalone binary? Prebuilt archives for macOS, Linux, and Windows are 
 
 To remove a stored key: press `ctrl+k` on the model picker, or run `oolong --reset-key`.
 
+## Configuration
+
+Oolong is fully usable with no configuration. To customize it, create `~/.config/oolong/config.toml` (`$XDG_CONFIG_HOME` is respected); every key is optional:
+
+```toml
+default_model = "gpt-5.6-terra"   # skip the picker on launch
+transcript_dir = "~/notes/chats"  # OOLONG_TRANSCRIPT_DIR still wins
+accent = "#FFAF87"                # primary accent color
+
+# Replaces the built-in model catalog when present. Any model your API key
+# can access works — entries are checked against the API and unavailable
+# ones are hidden from the picker.
+[[models]]
+id = "gpt-5.4"
+description = "Previous generation"
+input_rate = 1.25    # USD per 1M tokens, both optional
+output_rate = 10.00
+reasoning_effort = "medium"  # gpt-5.6 takes none | low | medium | high | xhigh
+verbosity = "low"            # low | medium | high
+```
+
+`reasoning_effort` and `verbosity` set the model's default [Responses API](https://platform.openai.com/docs/api-reference/responses) parameters. They're passed through as-is — the supported values vary by model generation, and the API reports clearly if a model rejects one. `ctrl+t` in the chat cycles a session-wide effort override, shown in the header. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
+
 ## Keybindings
 
 | Key | Action |
@@ -73,6 +97,7 @@ To remove a stored key: press `ctrl+k` on the model picker, or run `oolong --res
 | `↑` | Recall your last message (when the composer is empty) |
 | `ctrl+n` | Start a new chat |
 | `ctrl+p` | Edit the system prompt |
+| `ctrl+t` | Cycle the reasoning effort override |
 | `ctrl+s` | Save transcript to markdown |
 | `pgup` / `pgdn` | Scroll the conversation |
 | `home` / `end` | Jump to top / bottom |

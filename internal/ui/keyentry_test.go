@@ -5,13 +5,15 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/dicedatalore/oolong/internal/config"
 )
 
 // newKeyEntryModel builds a model with no client, which starts on the key
 // entry screen.
 func newKeyEntryModel(t *testing.T) tea.Model {
 	t.Helper()
-	var model tea.Model = New(nil, "dark")
+	var model tea.Model = New(nil, "dark", config.Config{}, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	if model.(Model).state != stateKeyEntry {
 		t.Fatal("nil client did not start on the key entry screen")

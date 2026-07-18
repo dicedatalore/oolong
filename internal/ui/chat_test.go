@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
@@ -20,7 +21,7 @@ func TestChatMultilineInput(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var model tea.Model = New(clientFor(srv), "dark")
+	var model tea.Model = New(clientFor(srv), "dark", config.Config{}, "")
 	step := func(msg tea.Msg) {
 		model, _ = model.Update(msg)
 	}

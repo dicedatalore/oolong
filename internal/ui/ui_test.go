@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/openai/openai-go/v3/option"
 
+	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
@@ -23,7 +24,7 @@ func clientFor(srv *httptest.Server) *openai.Client {
 // enterChat gets a fresh model into the chat state with the first model picked.
 func enterChat(t *testing.T, srv *httptest.Server) tea.Model {
 	t.Helper()
-	var model tea.Model = New(clientFor(srv), "dark")
+	var model tea.Model = New(clientFor(srv), "dark", config.Config{}, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if model.(Model).state != stateChat {

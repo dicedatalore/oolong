@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 
 	"github.com/dicedatalore/oolong/internal/clipboard"
+	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/mathfmt"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
@@ -213,6 +214,21 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layoutChat()
 			m.chatNotice = "new chat"
 			return m, nil
+		case "ctrl+t":
+			// Cycle the session's reasoning effort: model default → none →
+			// minimal → low → medium → high → back to model default.
+			if m.waiting {
+				return m, nil
+			}
+			m.effortOverride = nextEffort(m.effortOverride)
+			if m.effortOverride == "" {
+				m.chatNotice = "reasoning effort: model default"
+			} else {
+				m.chatNotice = "reasoning effort: " + m.effortOverride
+			}
+			m.help.ShowAll = false
+			m.layoutChat()
+			return m, nil
 		case "ctrl+p":
 			if m.waiting {
 				return m, nil
@@ -383,6 +399,20 @@ func (m *Model) exitSystemPrompt() {
 	m.layoutChat()
 }
 
+// nextEffort steps the ctrl+t cycle one level: through config.Efforts in
+// order, with "" (defer to the model's configured default) on either end.
+func nextEffort(cur string) string {
+	for i, e := range config.Efforts {
+		if e == cur {
+			if i == len(config.Efforts)-1 {
+				return ""
+			}
+			return config.Efforts[i+1]
+		}
+	}
+	return config.Efforts[0]
+}
+
 // lastMessage returns the content of the most recent message with the
 // given role.
 func (m Model) lastMessage(role string) (string, bool) {
@@ -418,12 +448,15 @@ func (m Model) viewChat() string {
 	if ein, eout := m.streamEstimate(); ein > 0 || eout > 0 {
 		in += ein
 		out += eout
-		if r, ok := rates[m.chosen]; ok {
+		if r, ok := m.rates[m.chosen]; ok {
 			usd += float64(ein)/1e6*r.input + float64(eout)/1e6*r.output
 		}
 	}
 	cost := fmt.Sprintf("~$%.4f • %s in / %s out",
 		usd, formatTokens(in), formatTokens(out))
+	if eff := m.effectiveEffort(); eff != "" {
+		cost += " • effort: " + eff
+	}
 	if m.systemPrompt != "" {
 		cost += " • system prompt"
 	}
