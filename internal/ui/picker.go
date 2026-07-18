@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,9 +29,11 @@ type modelRates struct {
 
 // setCatalog makes models the active catalog: it rebuilds the rates map and
 // the picker rows from it. The catalog starts as the config's (or built-in)
-// list in New and shrinks when the availability check drops models.
+// list in New and shrinks when the availability check drops models. It is
+// cloned because the picker's effort keys edit entries in place, and the
+// source may be the shared config.Builtin slice.
 func (m *Model) setCatalog(models []config.Model) {
-	m.catalog = models
+	m.catalog = slices.Clone(models)
 	m.rates = ratesFrom(models)
 	items := make([]list.Item, 0, len(models))
 	for _, cm := range models {
@@ -66,11 +69,17 @@ func (m Model) modelConfig(id string) config.Model {
 // bubble's Item interface — Go interfaces are implemented implicitly, so
 // there is no "implements" declaration to look for.
 type modelItem struct {
-	id   string
-	desc string
+	id     string
+	desc   string
+	effort string // reasoning effort shown in the title; "" for model default
 }
 
-func (m modelItem) Title() string       { return m.id }
+func (m modelItem) Title() string {
+	if m.effort == "" {
+		return m.id
+	}
+	return m.id + " • effort: " + m.effort
+}
 func (m modelItem) Description() string { return m.desc }
 func (m modelItem) FilterValue() string { return m.id }
 
@@ -84,7 +93,7 @@ func newModelItem(cm config.Model) modelItem {
 		}
 		desc += cost
 	}
-	return modelItem{id: cm.ID, desc: desc}
+	return modelItem{id: cm.ID, desc: desc, effort: cm.ReasoningEffort}
 }
 
 // price formats a USD rate, dropping the cents when they are zero.
@@ -115,13 +124,49 @@ func newPicker() list.Model {
 	// keybindings; SetEnabled(false) alone would be undone on every update.
 	picker.KeyMap.ShowFullHelp = key.NewBinding()
 	picker.KeyMap.CloseFullHelp = key.NewBinding()
+	// Page-turning would swallow left/right, which adjust the selected
+	// model's reasoning effort instead; up/down still walk across pages.
+	picker.KeyMap.NextPage = key.NewBinding()
+	picker.KeyMap.PrevPage = key.NewBinding()
 	picker.KeyMap.Quit = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "quit"))
 	picker.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "reasoning effort")),
 			key.NewBinding(key.WithKeys("ctrl+k"), key.WithHelp("ctrl+k", "drop API key")),
 		}
 	}
 	return picker
+}
+
+// stepEffort moves one step along the effort ladder — model default at the
+// bottom, then config.Efforts in order — clamping at both ends.
+func stepEffort(cur string, delta int) string {
+	ladder := append([]string{""}, config.Efforts...)
+	i := slices.Index(ladder, cur)
+	if i < 0 {
+		// A config-supplied level Oolong doesn't know; leave it alone.
+		return cur
+	}
+	i = min(max(i+delta, 0), len(ladder)-1)
+	return ladder[i]
+}
+
+// adjustEffort steps the selected model's reasoning effort and refreshes its
+// row. The catalog entry itself changes, so the setting rides along into the
+// chat (and back, if the user returns to the picker).
+func (m *Model) adjustEffort(delta int) tea.Cmd {
+	item, ok := m.picker.SelectedItem().(modelItem)
+	if !ok {
+		return nil
+	}
+	for i := range m.catalog {
+		if m.catalog[i].ID != item.id {
+			continue
+		}
+		m.catalog[i].ReasoningEffort = stepEffort(m.catalog[i].ReasoningEffort, delta)
+		return m.picker.SetItem(m.picker.GlobalIndex(), newModelItem(m.catalog[i]))
+	}
+	return nil
 }
 
 // modelsCheckMsg carries the result of listing the models available to the
@@ -230,6 +275,10 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.keyErr = ""
 			m.state = stateKeyEntry
 			return m, m.keyInput.Focus()
+		case "left":
+			return m, m.adjustEffort(-1)
+		case "right":
+			return m, m.adjustEffort(+1)
 		case "enter":
 			item, ok := m.picker.SelectedItem().(modelItem)
 			if !ok {

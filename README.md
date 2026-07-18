@@ -83,7 +83,7 @@ reasoning_effort = "medium"  # gpt-5.6 takes none | low | medium | high | xhigh
 verbosity = "low"            # low | medium | high
 ```
 
-`reasoning_effort` and `verbosity` set the model's default [Responses API](https://platform.openai.com/docs/api-reference/responses) parameters. They're passed through as-is — the supported values vary by model generation, and the API reports clearly if a model rejects one. `ctrl+t` in the chat cycles a session-wide effort override, shown in the header. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
+`reasoning_effort` and `verbosity` set the model's default [Responses API](https://platform.openai.com/docs/api-reference/responses) parameters. They're passed through as-is — the supported values vary by model generation, and the API reports clearly if a model rejects one. On the model picker, `←`/`→` adjust the selected model's effort for the session, shown in the list item and later in the chat header. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
 
 ## Keybindings
 
@@ -97,13 +97,14 @@ verbosity = "low"            # low | medium | high
 | `↑` | Recall your last message (when the composer is empty) |
 | `ctrl+n` | Start a new chat |
 | `ctrl+p` | Edit the system prompt |
-| `ctrl+t` | Cycle the reasoning effort override |
 | `ctrl+s` | Save transcript to markdown |
 | `pgup` / `pgdn` | Scroll the conversation |
 | `home` / `end` | Jump to top / bottom |
 | `esc` | Stop a streaming response, or switch model (the conversation is kept) |
 | `ctrl+c` | Quit |
 | `?` | Toggle full help |
+
+On the model picker, `←`/`→` adjust the selected model's reasoning effort before the chat starts.
 
 The mouse wheel scrolls the conversation too; hold `shift` while dragging to select text, as usual in TUIs.
 

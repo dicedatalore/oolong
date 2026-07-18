@@ -17,7 +17,6 @@ type chatKeyMap struct {
 	Scroll    key.Binding
 	Jump      key.Binding
 	SysPrompt key.Binding
-	Effort    key.Binding
 	Save      key.Binding
 	Stop      key.Binding
 	Back      key.Binding
@@ -38,7 +37,7 @@ func (k chatKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Send, k.NewLine, k.Paste},
 		{k.Copy, k.Regen, k.Recall},
-		{k.SysPrompt, k.Effort, k.Save, k.NewChat},
+		{k.SysPrompt, k.Save, k.NewChat},
 		{k.Scroll, k.Jump, k.Stop},
 		{k.Back, k.Quit, k.Help},
 	}
@@ -56,7 +55,6 @@ func newChatKeyMap() chatKeyMap {
 		Scroll:    key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "scroll")),
 		Jump:      key.NewBinding(key.WithKeys("home", "end"), key.WithHelp("home/end", "top/bottom")),
 		SysPrompt: key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("ctrl+p", "system prompt")),
-		Effort:    key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("ctrl+t", "reasoning effort")),
 		Save:      key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save chat")),
 		Stop:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "stop response")),
 		Back:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "change model")),

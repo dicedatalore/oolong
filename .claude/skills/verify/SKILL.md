@@ -45,8 +45,11 @@ assertions (`grep -c` for notices, model names, header fragments).
   API endpoint → "couldn't verify" and the whole catalog shows.
 - `default_model` → straight into chat, no picker frame.
 - Malformed config.toml → still launches; error notice on the picker.
+- Picker: left/right adjust the selected model's reasoning effort
+  (shown in the item title as `effort: …` and later in the chat
+  header; assert the request body carries it).
 - Chat: enter opens, type + enter sends (assert the request body),
-  ctrl+t cycles reasoning effort (header `effort: …`), ctrl+s saves
-  the transcript (config `transcript_dir`; `OOLONG_TRANSCRIPT_DIR`
-  wins), esc back to picker, esc quits. Key bytes: enter `\r`,
-  esc `\x1b`, ctrl+c `\x03`, ctrl+t `\x14`, ctrl+s `\x13`.
+  ctrl+s saves the transcript (config `transcript_dir`;
+  `OOLONG_TRANSCRIPT_DIR` wins), esc back to picker, esc quits.
+  Key bytes: enter `\r`, esc `\x1b`, ctrl+c `\x03`, ctrl+s `\x13`,
+  left `\x1b[D`, right `\x1b[C`.

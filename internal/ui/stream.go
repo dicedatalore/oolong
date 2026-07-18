@@ -39,22 +39,13 @@ func (m *Model) startStream() tea.Cmd {
 	m.stream = ch
 	m.cancelStream = cancel
 	m.streaming = false
+	cm := m.modelConfig(m.chosen)
 	opts := openai.Options{
-		ReasoningEffort: m.effectiveEffort(),
-		Verbosity:       m.modelConfig(m.chosen).Verbosity,
+		ReasoningEffort: cm.ReasoningEffort,
+		Verbosity:       cm.Verbosity,
 	}
 	go m.client.StreamChat(ctx, m.chosen, history, opts, ch)
 	return readStream(ch)
-}
-
-// effectiveEffort resolves the reasoning effort for the next request: the
-// session override wins over the model's configured default; "" omits the
-// parameter, leaving the server default.
-func (m Model) effectiveEffort() string {
-	if m.effortOverride != "" {
-		return m.effortOverride
-	}
-	return m.modelConfig(m.chosen).ReasoningEffort
 }
 
 // readStream waits for the next event from the in-flight stream. It is

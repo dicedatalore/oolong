@@ -98,10 +98,6 @@ type Model struct {
 	draft         string // message draft stashed while editing the system prompt
 	chatNotice    string // transient status line in the chat bottom bar
 
-	// session reasoning-effort override (ctrl+t); "" defers to the model's
-	// configured default, which in turn defers to the server default.
-	effortOverride string
-
 	// running totals for the cost estimate in the chat header; cost is
 	// accumulated per request at the rates of the model that served it,
 	// so it stays accurate when the model changes mid-chat. While a

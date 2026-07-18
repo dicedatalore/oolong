@@ -148,42 +148,60 @@ func TestConfigErrorSurfacesOnPicker(t *testing.T) {
 	}
 }
 
-func TestEffortCycleAndHeader(t *testing.T) {
+func TestPickerEffortAdjust(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()
 
-	model := enterChat(t, srv)
-	if v := model.(Model).viewChat(); strings.Contains(v, "effort:") {
-		t.Error("header shows an effort level before any is set")
+	var model tea.Model = New(clientFor(srv), "dark", config.Config{}, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	selectedTitle := func() string {
+		return model.(Model).picker.SelectedItem().(modelItem).Title()
+	}
+	if got := selectedTitle(); got != "gpt-5.6-luna" {
+		t.Fatalf("initial title = %q, want a bare model id", got)
 	}
 
-	model, _ = model.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	// Right steps up the ladder from the model default, clamping at xhigh.
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	if got := selectedTitle(); got != "gpt-5.6-luna • effort: none" {
+		t.Fatalf("title after one right = %q, want effort: none", got)
+	}
+	for range 6 {
+		model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	}
+	if got := selectedTitle(); got != "gpt-5.6-luna • effort: xhigh" {
+		t.Fatalf("title after many rights = %q, want clamped at xhigh", got)
+	}
+
+	// Left steps back down, clamping at the model default.
+	for range 7 {
+		model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	}
+	if got := selectedTitle(); got != "gpt-5.6-luna" {
+		t.Fatalf("title after many lefts = %q, want the bare id again", got)
+	}
+
+	// The chosen effort applies to the chat and shows in its header; the
+	// effort keys only touch the selected model.
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight}) // none → low
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if got := selectedTitle(); got != "gpt-5.6-terra" {
+		t.Fatalf("second model title = %q, want untouched", got)
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	am := model.(Model)
-	if am.effortOverride != "none" {
-		t.Fatalf("effortOverride after one ctrl+t = %q, want none", am.effortOverride)
+	if am.state != stateChat {
+		t.Fatal("enter did not open the chat")
 	}
-	if v := am.viewChat(); !strings.Contains(v, "effort: none") {
-		t.Error("header does not show the overridden effort")
-	}
-
-	// Four more steps reach xhigh; one more wraps back to the model default.
-	for range 4 {
-		model, _ = model.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	}
-	if got := model.(Model).effortOverride; got != "xhigh" {
-		t.Fatalf("effortOverride after five ctrl+t = %q, want xhigh", got)
-	}
-	model, _ = model.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	am = model.(Model)
-	if am.effortOverride != "" {
-		t.Fatalf("effortOverride after full cycle = %q, want \"\"", am.effortOverride)
-	}
-	if am.chatNotice != "reasoning effort: model default" {
-		t.Errorf("chatNotice = %q, want the model-default notice", am.chatNotice)
+	if v := am.viewChat(); !strings.Contains(v, "effort: low") {
+		t.Error("chat header does not show the picker-chosen effort")
 	}
 }
 
-func TestStreamCarriesConfiguredEffortAndOverride(t *testing.T) {
+func TestStreamCarriesEffortFromConfigAndPicker(t *testing.T) {
 	var body []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
@@ -203,7 +221,7 @@ func TestStreamCarriesConfiguredEffortAndOverride(t *testing.T) {
 		t.Fatal("default_model did not open the chat")
 	}
 
-	// The model's configured default applies with no override.
+	// The model's configured default applies untouched.
 	model = typeText(model, "hi")
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = pumpStream(t, model)
@@ -213,12 +231,19 @@ func TestStreamCarriesConfiguredEffortAndOverride(t *testing.T) {
 		}
 	}
 
-	// A session override (one ctrl+t → "none") wins over the config.
-	model, _ = model.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	// Back on the picker, one right (medium → high) retunes the model; the
+	// continued chat picks the new effort up.
+	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{"gpt-5.4": true}})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if model.(Model).state != statePicker {
+		t.Fatal("esc did not return to the picker")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = typeText(model, "again")
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	pumpStream(t, model)
-	if !strings.Contains(string(body), `"effort":"none"`) {
-		t.Errorf("request did not carry the session override:\n%s", body)
+	if !strings.Contains(string(body), `"effort":"high"`) {
+		t.Errorf("request did not carry the picker-adjusted effort:\n%s", body)
 	}
 }
