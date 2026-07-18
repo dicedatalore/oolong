@@ -149,8 +149,8 @@ func (c Config) hasModel(id string) bool {
 	return false
 }
 
-// Efforts lists the reasoning effort levels the ctrl+t session override
-// cycles through, lowest to highest — the set the current gpt-5.6
+// Efforts lists the reasoning effort levels the picker's ←/→ session
+// override steps through, lowest to highest — the set the current gpt-5.6
 // generation accepts. "" means the parameter is omitted from requests.
 // A model that rejects a level reports it clearly on the next send.
 var Efforts = []string{"none", "low", "medium", "high", "xhigh"}

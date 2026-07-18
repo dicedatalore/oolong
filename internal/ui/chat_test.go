@@ -293,8 +293,9 @@ func TestEscMidStreamCountsEstimatedUsage(t *testing.T) {
 	model := enterChat(t, srv)
 	model = typeText(model, "hello there mate") // 16 chars → 4 tokens estimated
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	ev := <-model.(Model).stream
-	model, _ = model.Update(streamEventMsg(ev)) // "twelve chars" → 3 tokens estimated
+	ch := model.(Model).stream
+	ev := <-ch
+	model, _ = model.Update(streamEventMsg{StreamEvent: ev, ch: ch}) // "twelve chars" → 3 tokens estimated
 
 	// While streaming, the header shows the live estimate.
 	am := model.(Model)

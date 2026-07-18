@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 // pumpStream feeds every event from the in-flight stream through Update,
@@ -18,7 +20,7 @@ func pumpStream(t *testing.T, model tea.Model) tea.Model {
 		t.Fatal("no stream in flight")
 	}
 	for ev := range ch {
-		model, _ = model.Update(streamEventMsg(ev))
+		model, _ = model.Update(streamEventMsg{StreamEvent: ev, ch: ch})
 	}
 	return model
 }
@@ -54,6 +56,53 @@ func TestStreamDeltasAccumulateAndDoneRecordsUsage(t *testing.T) {
 	if am.errText != "" {
 		t.Errorf("errText = %q, want empty", am.errText)
 	}
+}
+
+func TestStaleStreamEventIgnoredAfterRestart(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"old\"}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done() // hang until the client cancels
+	}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model = typeText(model, "hi")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	oldCh := model.(Model).stream
+	ev := <-oldCh // received from the wire, but not yet applied by Update
+
+	// esc stops the stream and ctrl+r immediately starts a new request, so
+	// the old stream's queued event arrives while a new stream is in flight.
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if !model.(Model).waiting {
+		t.Fatal("not waiting after regenerate")
+	}
+
+	model, _ = model.Update(streamEventMsg{StreamEvent: ev, ch: oldCh})
+	am := model.(Model)
+	if !am.waiting {
+		t.Error("stale delta stopped the new request")
+	}
+	if last := am.messages[len(am.messages)-1]; last.Role != "user" {
+		t.Errorf("stale delta appended a message: %+v", last)
+	}
+
+	// A stale done event must not cancel the new stream or book usage.
+	model, _ = model.Update(streamEventMsg{
+		StreamEvent: openai.StreamEvent{Done: true, Usage: openai.Usage{InputTokens: 9, OutputTokens: 9}},
+		ch:          oldCh,
+	})
+	am = model.(Model)
+	if !am.waiting {
+		t.Error("stale done event stopped the new request")
+	}
+	if am.inputTokens != 0 || am.outputTokens != 0 {
+		t.Errorf("stale usage booked: %d in / %d out", am.inputTokens, am.outputTokens)
+	}
+	am.finishStream() // cancel the in-flight stream so its goroutine exits
 }
 
 func TestStreamErrorShowsMessage(t *testing.T) {

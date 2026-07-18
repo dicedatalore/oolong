@@ -124,6 +124,11 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []Messag
 			msg := ev.Response.Error.Message
 			if msg == "" {
 				msg = "response " + strings.TrimPrefix(ev.Type, "response.")
+				// Incomplete responses report why (e.g. max_output_tokens,
+				// content_filter) in incomplete_details, not error.
+				if reason := ev.Response.IncompleteDetails.Reason; reason != "" {
+					msg += ": " + reason
+				}
 			}
 			emit(StreamEvent{Err: fmt.Errorf("openai: %s", msg)})
 			return

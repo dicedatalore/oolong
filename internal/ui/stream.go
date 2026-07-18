@@ -18,7 +18,13 @@ import (
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
-type streamEventMsg openai.StreamEvent
+// streamEventMsg carries one event from an in-flight stream, tagged with the
+// channel it came from so an event queued by an already-abandoned stream can
+// be told apart from the current one and dropped.
+type streamEventMsg struct {
+	openai.StreamEvent
+	ch <-chan openai.StreamEvent
+}
 
 // startStream kicks off a streaming completion for the current transcript
 // (prefixed with the system prompt, if set) and returns the command that
@@ -57,7 +63,7 @@ func readStream(ch <-chan openai.StreamEvent) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return streamEventMsg(ev)
+		return streamEventMsg{StreamEvent: ev, ch: ch}
 	}
 }
 
@@ -110,8 +116,9 @@ func (m *Model) finishStream() {
 // handleStreamEvent folds one stream event into the chat: append a delta to
 // the assistant message, or finish up on done/error.
 func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
-	if m.state != stateChat || m.stream == nil {
-		// Stale event from a stream that was already stopped.
+	if m.state != stateChat || msg.ch != m.stream {
+		// Stale event from a stream that was already stopped — possibly
+		// after a new stream started, so a nil check alone isn't enough.
 		return m, nil
 	}
 	switch {
