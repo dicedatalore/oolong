@@ -124,6 +124,8 @@ go test ./...
 
 The UI is a Bubble Tea state machine with three screens — model picker, chat, and first-run key entry — each in its own file under `internal/ui`. Supporting packages: `internal/openai` (streaming client), `internal/keystore` (keychain), `internal/mathfmt` (LaTeX → Unicode), and `internal/clipboard` (image paste).
 
+Releases are cut automatically on push to `main`: the version bump is derived from [conventional commit](https://www.conventionalcommits.org) messages — `feat:` → minor, `fix:` → patch, a breaking change → major — and commits of other types (`chore:`, `docs:`, `test:`, …) don't trigger a release.
+
 ## License
 
 [MIT](LICENSE)

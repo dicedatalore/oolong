@@ -4,6 +4,13 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # "fix(deps): …" so merged Go dependency bumps cut a patch release
+    # (the release workflow derives the version from conventional commits).
+    commit-message:
+      prefix: "fix"
+      include: "scope"
+  # Action bumps keep the default "chore(deps)" prefix: they don't change
+  # the shipped binary, so they shouldn't trigger a release.
   - package-ecosystem: github-actions
     directory: /
     schedule:

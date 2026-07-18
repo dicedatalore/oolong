@@ -1,14 +1,58 @@
 name: Release
 
+# Two paths into a release:
+#   - push to main: the tag job derives the next semver from conventional
+#     commits since the last tag (feat → minor, fix → patch, breaking →
+#     major) and pushes it; chore/docs/test-only pushes produce no tag and
+#     no release. The tag is created with GITHUB_TOKEN, which deliberately
+#     does not retrigger this workflow, so goreleaser runs as a second job
+#     in the same run.
+#   - manual tag push (escape hatch for forcing a version): the tag job is
+#     skipped and goreleaser releases the pushed tag as before.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
 
 permissions:
   contents: write
 
+# Serialize runs so two quick pushes can't race the tag computation.
+concurrency:
+  group: release
+
 jobs:
+  tag:
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # golang.design/x/clipboard needs the X11 headers on Linux.
+      - name: Install X11 headers
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev
+      # Release gate: a red main must not get tagged and shipped.
+      - run: go build ./...
+      - run: go test ./...
+      - id: bump
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # No feat/fix/breaking commits since the last tag → no new tag
+          # (new_tag stays empty and the goreleaser job is skipped).
+          default_bump: false
+
   goreleaser:
+    needs: [tag]
+    # Run for a manual tag push (tag job skipped) or when the tag job cut a
+    # new version; !cancelled() lets the tag-push path past the skipped need.
+    if: ${{ !cancelled() && (github.ref_type == 'tag' || needs.tag.outputs.new_tag != '') }}
     # macOS arm64 runner: the darwin/arm64 build needs cgo for clipboard
     # image paste; everything else cross-compiles with CGO_ENABLED=0.
     runs-on: macos-latest
@@ -16,6 +60,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ needs.tag.outputs.new_tag || github.ref }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
