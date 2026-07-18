@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/muesli/termenv v0.16.0
-	github.com/openai/openai-go/v3 v3.42.0
+	github.com/openai/openai-go/v3 v3.43.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.design/x/clipboard v0.8.0
 )
