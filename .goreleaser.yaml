@@ -52,9 +52,13 @@ changelog:
 
 homebrew_casks:
   - name: oolong
+    # Publishing needs the dicedatalore/homebrew-tap repo to exist and a
+    # TAP_GITHUB_TOKEN repo secret (fine-grained PAT with Contents
+    # read/write on the tap); the release workflow passes it through.
     repository:
       owner: dicedatalore
       name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/dicedatalore/oolong
     description: Simple ephemeral chat with OpenAI models in your terminal
     license: MIT
@@ -65,7 +69,3 @@ homebrew_casks:
           if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/oolong"]
           end
-    # Publishing the cask needs the homebrew-tap repo to exist and a
-    # TAP_GITHUB_TOKEN secret (a PAT with push access to it) exported as
-    # GITHUB_TOKEN for this step. Flip to false at public launch.
-    skip_upload: true

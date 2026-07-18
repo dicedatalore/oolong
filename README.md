@@ -21,17 +21,27 @@ Conversations live in your terminal and nowhere else. Nothing is written to disk
 
 ## Install
 
+### Homebrew (macOS)
+
+```sh
+brew install --cask dicedatalore/tap/oolong
+```
+
+### With Go
+
 ```sh
 go install github.com/dicedatalore/oolong@latest
 ```
 
-Requires Go 1.26+ and cgo (used for clipboard support). On Linux you'll also need the X11 development headers:
+Works on macOS, Linux, and Windows with Go 1.26+. Clipboard image paste needs cgo — a C compiler, plus the X11 development headers on Linux:
 
 ```sh
 sudo apt install libx11-dev   # Debian/Ubuntu
 ```
 
-Or build from source:
+Without cgo the build still works; image paste is simply disabled.
+
+### From source
 
 ```sh
 git clone https://github.com/dicedatalore/oolong.git
@@ -39,6 +49,8 @@ cd oolong
 go build
 ./oolong
 ```
+
+Prefer a standalone binary? Prebuilt archives for macOS, Linux, and Windows are on the [releases page](https://github.com/dicedatalore/oolong/releases). On Windows, run Oolong from [Windows Terminal](https://aka.ms/terminal) — the legacy console doesn't render TUIs well.
 
 ## Getting started
 
