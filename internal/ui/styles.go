@@ -23,16 +23,23 @@ var (
 			Background(peach).
 			Padding(0, 1)
 
-	inputRowStyle  = lipgloss.NewStyle().PaddingLeft(2)
+	// No indent: the textarea's own "┃ " prompt lines up under the
+	// conversation blocks' left borders.
+	inputRowStyle  = lipgloss.NewStyle()
 	bottomBarStyle = lipgloss.NewStyle().Padding(1, 0, 0, 2)
 
 	userLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(peach)
 	botLabelStyle  = lipgloss.NewStyle().Bold(true).Foreground(purple)
-	// User messages render in a peach-bordered block so they stand apart
-	// from the model's markdown output in long transcripts.
+	// Both sides of the conversation render in left-bordered blocks that
+	// align flush left: user messages in the primary accent, model
+	// replies in the secondary.
 	userBlockStyle = lipgloss.NewStyle().
 			Border(lipgloss.ThickBorder(), false, false, false, true).
 			BorderForeground(peach).
+			PaddingLeft(1)
+	botBlockStyle = lipgloss.NewStyle().
+			Border(lipgloss.ThickBorder(), false, false, false, true).
+			BorderForeground(purple).
 			PaddingLeft(1)
 	helpStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87"))

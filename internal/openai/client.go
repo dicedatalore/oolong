@@ -32,6 +32,7 @@ func New(apiKey string, opts ...option.RequestOption) *Client {
 type Message struct {
 	Role    string
 	Content string
+	Model   string   // assistant messages: the model that produced the reply
 	Images  [][]byte // PNG-encoded attachments, user messages only
 }
 

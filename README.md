@@ -13,9 +13,10 @@ Conversations live in your terminal and nowhere else. Nothing is written to disk
 - **Streaming responses** rendered as markdown with syntax-highlighted code blocks
 - **Ephemeral by design** — history is kept in memory only, and requests are sent with response storage disabled on OpenAI's side
 - **Model picker** with per-model pricing, plus a live token count and cost estimate in the chat header
+- **Mid-chat model switch** — `esc` back to the picker keeps the conversation, so you can escalate to a bigger model halfway through
 - **Image input** — paste an image from the clipboard (`ctrl+v`) and it's attached to your next message
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
-- **Transcript export** — `ctrl+s` saves the conversation as a timestamped markdown file
+- **Transcript export** — `ctrl+s` saves the conversation as a timestamped markdown file, to the current directory or `OOLONG_TRANSCRIPT_DIR` if set
 - **Keychain storage** — your API key lives in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service), not in a dotfile
 - **Readable math** — LaTeX in responses is converted to plain Unicode instead of showing up as mangled backslashes
 
@@ -67,12 +68,16 @@ To remove a stored key: press `ctrl+k` on the model picker, or run `oolong --res
 | `enter` | Send message |
 | `shift+enter` / `ctrl+j` | Insert newline |
 | `ctrl+v` | Paste (a clipboard image becomes an attachment) |
+| `ctrl+y` | Copy the last reply to the clipboard |
+| `ctrl+r` | Regenerate the last reply |
+| `↑` | Recall your last message (when the composer is empty) |
+| `ctrl+n` | Start a new chat |
 | `ctrl+p` | Edit the system prompt |
 | `ctrl+s` | Save transcript to markdown |
 | `pgup` / `pgdn` | Scroll the conversation |
 | `home` / `end` | Jump to top / bottom |
-| `esc` | Stop a streaming response, or go back to the model picker |
-| `ctrl+c` | Stop a streaming response, or quit |
+| `esc` | Stop a streaming response, or switch model (the conversation is kept) |
+| `ctrl+c` | Quit |
 | `?` | Toggle full help |
 
 The mouse wheel scrolls the conversation too; hold `shift` while dragging to select text, as usual in TUIs.

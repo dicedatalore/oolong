@@ -29,6 +29,11 @@ func (m *Model) startStream() tea.Cmd {
 		history = append(history, openai.Message{Role: "system", Content: m.systemPrompt})
 	}
 	history = append(history, m.messages...)
+	chars := 0
+	for _, msg := range history {
+		chars += len(msg.Content)
+	}
+	m.estInputTokens = estimateTokens(chars)
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan openai.StreamEvent)
 	m.stream = ch
@@ -48,6 +53,39 @@ func readStream(ch <-chan openai.StreamEvent) tea.Cmd {
 			return nil
 		}
 		return streamEventMsg(ev)
+	}
+}
+
+// estimateTokens approximates a token count from a character count with
+// the usual ~4 chars/token heuristic. Used for the in-flight numbers in
+// the header; real usage from the server replaces it when a response
+// completes.
+func estimateTokens(chars int) int {
+	return chars / 4
+}
+
+// streamEstimate returns the estimated usage of the in-flight request:
+// the input that was sent and the output streamed so far.
+func (m Model) streamEstimate() (in, out int) {
+	if !m.waiting {
+		return 0, 0
+	}
+	in = m.estInputTokens
+	if m.streaming {
+		out = estimateTokens(len(m.messages[len(m.messages)-1].Content))
+	}
+	return in, out
+}
+
+// settleStreamEstimate folds the in-flight estimate into the session
+// totals. Called when a stream is stopped early: the request still
+// incurred cost, but its usage report will never arrive.
+func (m *Model) settleStreamEstimate() {
+	in, out := m.streamEstimate()
+	m.inputTokens += in
+	m.outputTokens += out
+	if r, ok := rates[m.chosen]; ok {
+		m.costUSD += float64(in)/1e6*r.input + float64(out)/1e6*r.output
 	}
 }
 
@@ -80,12 +118,16 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 		m.finishStream()
 		m.inputTokens += msg.Usage.InputTokens
 		m.outputTokens += msg.Usage.OutputTokens
+		if r, ok := rates[m.chosen]; ok {
+			m.costUSD += float64(msg.Usage.InputTokens)/1e6*r.input +
+				float64(msg.Usage.OutputTokens)/1e6*r.output
+		}
 		return m, nil
 	default:
 		// First delta: append the assistant message the deltas build up in.
 		if !m.streaming {
 			m.streaming = true
-			m.messages = append(m.messages, openai.Message{Role: "assistant"})
+			m.messages = append(m.messages, openai.Message{Role: "assistant", Model: m.chosen})
 		}
 		m.messages[len(m.messages)-1].Content += msg.Delta
 		// Keep following the newest text only if the user hasn't scrolled up.

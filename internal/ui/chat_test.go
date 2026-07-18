@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/dicedatalore/oolong/internal/openai"
 )
@@ -60,38 +62,56 @@ func TestChatMultilineInput(t *testing.T) {
 	am.finishStream() // cancel the in-flight stream so its goroutine exits
 }
 
-func TestStopStreamKeysStayInChat(t *testing.T) {
+func TestEscStopsStreamAndStaysInChat(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done() // hang until the client cancels
 	}))
 	defer srv.Close()
 
-	for _, k := range []string{"esc", "ctrl+c"} {
-		model := enterChat(t, srv)
-		model = typeText(model, "hi")
-		model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-		if !model.(Model).waiting {
-			t.Fatalf("%s: not waiting after send", k)
-		}
+	model := enterChat(t, srv)
+	model = typeText(model, "hi")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !model.(Model).waiting {
+		t.Fatal("not waiting after send")
+	}
 
-		key := tea.KeyPressMsg{Code: tea.KeyEscape}
-		if k == "ctrl+c" {
-			key = tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
-		}
-		model, cmd := model.Update(key)
-		am := model.(Model)
-		if am.state != stateChat {
-			t.Errorf("%s while streaming left chat state", k)
-		}
-		if am.waiting {
-			t.Errorf("%s while streaming did not stop the stream", k)
-		}
-		if cmd != nil {
-			if _, quit := cmd().(tea.QuitMsg); quit {
-				t.Errorf("%s while streaming quit the program", k)
-			}
+	model, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	am := model.(Model)
+	if am.state != stateChat {
+		t.Error("esc while streaming left chat state")
+	}
+	if am.waiting {
+		t.Error("esc while streaming did not stop the stream")
+	}
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Error("esc while streaming quit the program")
 		}
 	}
+}
+
+func TestCtrlCQuitsEvenWhileStreaming(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done() // hang until the client cancels
+	}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model = typeText(model, "hi")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !model.(Model).waiting {
+		t.Fatal("not waiting after send")
+	}
+
+	model, cmd := model.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+c returned no command")
+	}
+	if _, quit := cmd().(tea.QuitMsg); !quit {
+		t.Error("ctrl+c while streaming did not quit")
+	}
+	am := model.(Model)
+	am.finishStream() // cancel the in-flight stream so its goroutine exits
 }
 
 func TestSystemPromptEditing(t *testing.T) {
@@ -138,38 +158,191 @@ func TestSystemPromptEditing(t *testing.T) {
 	}
 }
 
-func TestEscLeavesChatAndResetsSession(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer srv.Close()
-
-	model := enterChat(t, srv)
+// seedConversation puts a small finished conversation on the model.
+func seedConversation(model tea.Model) tea.Model {
 	am := model.(Model)
 	am.messages = []openai.Message{
 		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "hi"},
+		{Role: "assistant", Content: "hi", Model: am.chosen},
 	}
 	am.inputTokens, am.outputTokens = 100, 50
-	am.errText = "old error"
 	am.systemPrompt = "be brief"
-	model = am
+	return am
+}
 
+func TestEscKeepsChatForModelSwitch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := seedConversation(enterChat(t, srv))
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if got := model.(Model).state; got != statePicker {
 		t.Fatalf("state after esc = %v, want statePicker", got)
 	}
 
-	// Picking a model again starts a fresh session.
+	// Picking a model continues the same conversation.
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	am = model.(Model)
+	am := model.(Model)
 	if am.state != stateChat {
 		t.Fatal("not back in chat after picking a model")
 	}
-	if len(am.messages) != 0 || am.inputTokens != 0 || am.outputTokens != 0 || am.errText != "" {
-		t.Errorf("session not reset: messages=%d in=%d out=%d err=%q",
-			len(am.messages), am.inputTokens, am.outputTokens, am.errText)
+	if len(am.messages) != 2 || am.systemPrompt != "be brief" {
+		t.Errorf("conversation lost on model switch: messages=%d prompt=%q",
+			len(am.messages), am.systemPrompt)
 	}
-	if am.systemPrompt != "" {
-		t.Errorf("system prompt survived the reset: %q", am.systemPrompt)
+	if am.inputTokens != 100 || am.outputTokens != 50 {
+		t.Errorf("token totals reset on model switch: %d in / %d out", am.inputTokens, am.outputTokens)
+	}
+}
+
+func TestPickerEscQuitsEvenWithKeptChat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := seedConversation(enterChat(t, srv))
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	_, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("esc on picker returned no command")
+	}
+	if _, quit := cmd().(tea.QuitMsg); !quit {
+		t.Error("esc on picker did not quit")
+	}
+}
+
+func TestCtrlNStartsFresh(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := seedConversation(enterChat(t, srv))
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
+	am := model.(Model)
+	if am.state != stateChat {
+		t.Fatal("ctrl+n left the chat screen")
+	}
+	if len(am.messages) != 0 || am.inputTokens != 0 || am.outputTokens != 0 || am.systemPrompt != "" {
+		t.Errorf("session not reset: messages=%d in=%d out=%d prompt=%q",
+			len(am.messages), am.inputTokens, am.outputTokens, am.systemPrompt)
+	}
+	if am.chatNotice != "new chat" {
+		t.Errorf("chatNotice = %q, want %q", am.chatNotice, "new chat")
+	}
+}
+
+func TestRegenerateReplacesLastReply(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"reply %d\"}\n\n", calls)
+		fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
+	}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model = typeText(model, "hi")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = pumpStream(t, model)
+
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if !model.(Model).waiting {
+		t.Fatal("ctrl+r did not start a new request")
+	}
+	model = pumpStream(t, model)
+
+	am := model.(Model)
+	if n := len(am.messages); n != 2 {
+		t.Fatalf("len(messages) = %d, want 2 (user + regenerated reply)", n)
+	}
+	if got := am.messages[1].Content; got != "reply 2" {
+		t.Errorf("regenerated reply = %q, want %q", got, "reply 2")
+	}
+}
+
+func TestUpRecallsLastMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := seedConversation(enterChat(t, srv))
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if got := model.(Model).input.Value(); got != "hello" {
+		t.Errorf("input after up = %q, want %q", got, "hello")
+	}
+
+	// With text in the composer, up is cursor movement, not recall.
+	am := model.(Model)
+	am.input.SetValue("draft")
+	model = am
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if got := model.(Model).input.Value(); got != "draft" {
+		t.Errorf("up clobbered a non-empty composer: %q", got)
+	}
+}
+
+func TestEscMidStreamCountsEstimatedUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"twelve chars\"}\n\n")
+		fl.Flush()
+		<-r.Context().Done() // never completes, so no usage report
+	}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model = typeText(model, "hello there mate") // 16 chars → 4 tokens estimated
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	ev := <-model.(Model).stream
+	model, _ = model.Update(streamEventMsg(ev)) // "twelve chars" → 3 tokens estimated
+
+	// While streaming, the header shows the live estimate.
+	am := model.(Model)
+	if v := am.viewChat(); !strings.Contains(v, "4 in / 3 out") {
+		t.Errorf("streaming header missing live estimate 4 in / 3 out:\n%s", v)
+	}
+
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	am = model.(Model)
+	if am.waiting {
+		t.Fatal("still waiting after esc")
+	}
+	if am.inputTokens != 4 || am.outputTokens != 3 {
+		t.Errorf("settled tokens = %d in / %d out, want 4 in / 3 out (estimated)",
+			am.inputTokens, am.outputTokens)
+	}
+	if am.costUSD == 0 {
+		t.Error("costUSD not updated for a stopped stream")
+	}
+}
+
+func TestCopyWithNothingToCopy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	if got := model.(Model).chatNotice; got != "nothing to copy yet" {
+		t.Errorf("chatNotice = %q, want %q", got, "nothing to copy yet")
+	}
+}
+
+func TestChatViewFillsWindow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	// Fresh chat: two lines of content must not let the input and bottom
+	// bar float up under it.
+	model := enterChat(t, srv) // 80x24 window
+	am := model.(Model)
+	if h := lipgloss.Height(am.viewChat()); h != 24 {
+		t.Errorf("empty chat view height = %d, want 24", h)
+	}
+
+	model = seedConversation(model)
+	am = model.(Model)
+	am.layoutChat()
+	if h := lipgloss.Height(am.viewChat()); h != 24 {
+		t.Errorf("seeded chat view height = %d, want 24", h)
 	}
 }
 
@@ -208,10 +381,15 @@ func TestConversationViewCache(t *testing.T) {
 		t.Error("resize did not re-render cached messages")
 	}
 
-	// Leaving the chat drops the cache with the transcript.
+	// esc keeps the transcript (and its cache); ctrl+n on the picker
+	// discards both.
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if got := model.(Model).msgCache; got == nil {
+		t.Error("esc dropped the cache along with the kept chat")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	if got := model.(Model).msgCache; got != nil {
-		t.Errorf("cache survived leaving the chat: %d entries", len(got))
+		t.Errorf("cache survived ctrl+n: %d entries", len(got))
 	}
 }
 

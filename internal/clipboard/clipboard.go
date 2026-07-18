@@ -19,3 +19,12 @@ func Image() ([]byte, error) {
 	}
 	return xclipboard.Read(xclipboard.FmtImage), nil
 }
+
+// WriteText puts s on the system clipboard.
+func WriteText(s string) error {
+	if err := initOnce(); err != nil {
+		return err
+	}
+	xclipboard.Write(xclipboard.FmtText, []byte(s))
+	return nil
+}

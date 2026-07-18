@@ -90,9 +90,16 @@ type Model struct {
 	draft         string // message draft stashed while editing the system prompt
 	chatNotice    string // transient status line in the chat bottom bar
 
-	// running totals for the cost estimate in the chat header
-	inputTokens  int
-	outputTokens int
+	// running totals for the cost estimate in the chat header; cost is
+	// accumulated per request at the rates of the model that served it,
+	// so it stays accurate when the model changes mid-chat. While a
+	// request is in flight the header adds a local estimate (the server
+	// only reports usage once a response completes), which is settled
+	// into the totals if the stream is stopped early.
+	inputTokens    int
+	outputTokens   int
+	costUSD        float64
+	estInputTokens int // estimated input tokens of the in-flight request
 
 	// API key entry
 	keyInput      textinput.Model
@@ -153,12 +160,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
-			// While a response is in flight, ctrl+c stops the stream and
-			// returns to the input bar rather than exiting.
-			if m.state == stateChat && m.waiting {
-				m.finishStream()
-				return m, nil
-			}
+			// Quit from anywhere; esc stops an in-flight response.
 			return m, tea.Quit
 		}
 		// Every other key goes to the active screen below.
