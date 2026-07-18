@@ -63,7 +63,7 @@ Require oolong
 
 Set Shell "bash"
 Set FontSize 32
-Set Width 3600
+Set Width 2400
 Set Height 1800
 
 Type "oolong" Sleep 2s  Enter

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -280,6 +281,77 @@ func TestUpRecallsLastMessage(t *testing.T) {
 	}
 }
 
+func TestUpDownCyclesSentMessages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	am := model.(Model)
+	am.messages = []openai.Message{
+		{Role: "user", Content: "first", Images: [][]byte{{1}}},
+		{Role: "assistant", Content: "ok", Model: am.chosen},
+		{Role: "user", Content: "second"},
+		{Role: "assistant", Content: "ok", Model: am.chosen},
+	}
+	model = am
+	up := tea.KeyPressMsg{Code: tea.KeyUp}
+	down := tea.KeyPressMsg{Code: tea.KeyDown}
+	value := func() string { return model.(Model).input.Value() }
+
+	model, _ = model.Update(up)
+	if value() != "second" {
+		t.Fatalf("after ↑, composer = %q, want %q", value(), "second")
+	}
+	if imgs := model.(Model).pendingImages; imgs != nil {
+		t.Errorf("recall of an image-less message left %d pending images", len(imgs))
+	}
+
+	model, _ = model.Update(up)
+	if value() != "first" {
+		t.Fatalf("after ↑↑, composer = %q, want %q", value(), "first")
+	}
+	if imgs := model.(Model).pendingImages; len(imgs) != 1 {
+		t.Errorf("recalled message lost its attachment: %d pending images", len(imgs))
+	}
+
+	// Clamped at the oldest.
+	model, _ = model.Update(up)
+	if value() != "first" {
+		t.Errorf("↑ past the oldest changed the composer to %q", value())
+	}
+
+	// ↓ steps back toward the newest, then restores the empty composer.
+	model, _ = model.Update(down)
+	if value() != "second" {
+		t.Fatalf("after ↓, composer = %q, want %q", value(), "second")
+	}
+	model, _ = model.Update(down)
+	am = model.(Model)
+	if am.input.Value() != "" || am.pendingImages != nil || am.recallIdx != -1 {
+		t.Errorf("↓ past the newest did not restore the composer: value=%q images=%d recallIdx=%d",
+			am.input.Value(), len(am.pendingImages), am.recallIdx)
+	}
+}
+
+func TestEditedRecallStopsCycling(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := seedConversation(enterChat(t, srv))
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if got := model.(Model).input.Value(); got != "hello" {
+		t.Fatalf("recall = %q, want %q", got, "hello")
+	}
+	model = typeText(model, "!")
+	if model.(Model).recallIdx != -1 {
+		t.Error("editing the recall did not clear recall state")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if got := model.(Model).input.Value(); got != "hello!" {
+		t.Errorf("↑ on an edited recall changed the composer to %q", got)
+	}
+}
+
 func TestEscMidStreamCountsEstimatedUsage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -314,6 +386,64 @@ func TestEscMidStreamCountsEstimatedUsage(t *testing.T) {
 	}
 	if am.costUSD == 0 {
 		t.Error("costUSD not updated for a stopped stream")
+	}
+}
+
+func TestEditorRequiresEditorEnv(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model, cmd := model.Update(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
+	if cmd != nil {
+		t.Error("ctrl+e without $EDITOR returned a command")
+	}
+	if got := model.(Model).chatNotice; !strings.Contains(got, "$EDITOR") {
+		t.Errorf("chatNotice = %q, want a $EDITOR hint", got)
+	}
+}
+
+func TestEditorRoundTrip(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "true") // exits 0 without touching the file
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model = typeText(model, "draft")
+	model, cmd := model.Update(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+e with $EDITOR set returned no command")
+	}
+
+	// Stand in for the editor: overwrite the temp file, then deliver the
+	// finished message the ExecProcess callback would produce.
+	f, err := os.CreateTemp(t.TempDir(), "edited-*.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("composed in editor\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	model, _ = model.Update(editorFinishedMsg{path: f.Name()})
+	if got := model.(Model).input.Value(); got != "composed in editor" {
+		t.Errorf("composer after editor = %q, want %q", got, "composed in editor")
+	}
+	if _, err := os.Stat(f.Name()); !os.IsNotExist(err) {
+		t.Error("temp file not cleaned up after the editor round trip")
+	}
+
+	// A failed editor leaves the composer alone.
+	model, _ = model.Update(editorFinishedMsg{path: "does-not-exist", err: fmt.Errorf("exit 1")})
+	am := model.(Model)
+	if am.input.Value() != "composed in editor" {
+		t.Errorf("failed editor changed the composer: %q", am.input.Value())
+	}
+	if !strings.Contains(am.errText, "exit 1") {
+		t.Errorf("errText = %q, want the editor error", am.errText)
 	}
 }
 
@@ -392,6 +522,28 @@ func TestConversationViewCache(t *testing.T) {
 	model, _ = model.Update(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	if got := model.(Model).msgCache; got != nil {
 		t.Errorf("cache survived ctrl+n: %d entries", len(got))
+	}
+}
+
+func TestConversationWidthCapped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := seedConversation(enterChat(t, srv))
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+	am := model.(Model)
+	if w := lipgloss.Width(am.msgCache[0]); w > maxMsgWidth {
+		t.Errorf("message block width = %d on a 160-col window, want <= %d", w, maxMsgWidth)
+	}
+	if am.cacheWidth != maxMsgWidth {
+		t.Errorf("cacheWidth = %d, want the %d cap", am.cacheWidth, maxMsgWidth)
+	}
+
+	// Both widths are past the cap, so the resize must not invalidate the
+	// render cache.
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	if got := model.(Model).cacheWidth; got != maxMsgWidth {
+		t.Errorf("cacheWidth after in-cap resize = %d, want %d", got, maxMsgWidth)
 	}
 }
 

@@ -208,6 +208,30 @@ func TestLoadRespectsXDGConfigHome(t *testing.T) {
 	}
 }
 
+func TestInitWritesScaffoldOnce(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path, err := Init()
+	if err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if path != Path() {
+		t.Errorf("Init() path = %q, want %q", path, Path())
+	}
+	// The scaffold is fully commented out, so it must load as the zero
+	// (all-defaults) config with no error.
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() after Init() error = %v", err)
+	}
+	if c.DefaultModel != "" || c.CustomCatalog() {
+		t.Errorf("scaffold config is not all-defaults: %+v", c)
+	}
+	// A second init must refuse to clobber the existing file.
+	if _, err := Init(); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("second Init() error = %v, want already-exists", err)
+	}
+}
+
 func TestLoadMissingFileIsNotAnError(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	c, err := Load()

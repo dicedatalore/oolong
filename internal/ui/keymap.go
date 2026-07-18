@@ -10,7 +10,9 @@ type chatKeyMap struct {
 	Send      key.Binding
 	NewLine   key.Binding
 	Paste     key.Binding
+	Editor    key.Binding
 	Copy      key.Binding
+	CopyCode  key.Binding
 	Regen     key.Binding
 	Recall    key.Binding
 	NewChat   key.Binding
@@ -36,10 +38,11 @@ func (k chatKeyMap) ShortHelp() []key.Binding {
 func (k chatKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Send, k.NewLine, k.Paste},
-		{k.Copy, k.Regen, k.Recall},
-		{k.SysPrompt, k.Save, k.NewChat},
-		{k.Scroll, k.Jump, k.Stop},
-		{k.Back, k.Quit, k.Help},
+		{k.Editor, k.Copy, k.CopyCode},
+		{k.Regen, k.Recall, k.SysPrompt},
+		{k.Save, k.NewChat, k.Scroll},
+		{k.Jump, k.Stop, k.Back},
+		{k.Quit, k.Help},
 	}
 }
 
@@ -48,9 +51,11 @@ func newChatKeyMap() chatKeyMap {
 		Send:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
 		NewLine:   key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"), key.WithHelp("shift+enter", "new line")),
 		Paste:     key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("ctrl+v", "paste")),
+		Editor:    key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "compose in $EDITOR")),
 		Copy:      key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("ctrl+y", "copy last reply")),
+		CopyCode:  key.NewBinding(key.WithKeys("ctrl+b"), key.WithHelp("ctrl+b", "copy code block")),
 		Regen:     key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "regenerate")),
-		Recall:    key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "recall last message")),
+		Recall:    key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "message history")),
 		NewChat:   key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "new chat")),
 		Scroll:    key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "scroll")),
 		Jump:      key.NewBinding(key.WithKeys("home", "end"), key.WithHelp("home/end", "top/bottom")),

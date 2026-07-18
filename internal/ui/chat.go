@@ -6,6 +6,9 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -71,6 +74,17 @@ func (m *Model) resetChat() {
 	m.outputTokens = 0
 	m.costUSD = 0
 	m.pendingImages = nil
+	m.clearRecall()
+}
+
+// maxMsgWidth caps how wide conversation blocks render: full-width
+// paragraphs on a wide window are hard to read. The blocks stay left-aligned
+// and the viewport itself still fills the window.
+const maxMsgWidth = 100
+
+// msgWidth returns the width conversation blocks render at.
+func (m Model) msgWidth() int {
+	return min(m.vp.Width(), maxMsgWidth)
 }
 
 // layoutChat resizes the viewport and input to fill the window and rebuilds
@@ -103,24 +117,26 @@ func (m *Model) layoutChat() {
 	// Render markdown without glamour's document margin: the reply sits
 	// in a left-bordered block like user messages, and the block provides
 	// the indentation. Wrap to the block's inner width (border + padding
-	// take 2 of the 4 columns the block is inset by).
+	// take 2 of the 4 columns the block is inset by), capped for
+	// readability on wide windows.
 	cfg := styles.DarkStyleConfig
 	if m.mdStyle == styles.LightStyle {
 		cfg = styles.LightStyleConfig
 	}
 	cfg.Document.Margin = new(uint)
+	msgWidth := min(contentWidth, maxMsgWidth)
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStyles(cfg),
-		glamour.WithWordWrap(contentWidth-6),
+		glamour.WithWordWrap(msgWidth-6),
 	)
 	if err == nil {
 		m.renderer = renderer
 	}
-	// Rendered output only depends on the content width, so the cache
-	// survives layout changes that don't alter it (help toggle, input
-	// growth, notices).
-	if contentWidth != m.cacheWidth {
-		m.cacheWidth = contentWidth
+	// Rendered output only depends on the (capped) message width, so the
+	// cache survives layout changes that don't alter it (help toggle,
+	// input growth, notices, resizes past the cap).
+	if msgWidth != m.cacheWidth {
+		m.cacheWidth = msgWidth
 		m.msgCache = nil
 	}
 	m.vp.SetContent(m.conversationView())
@@ -164,7 +180,7 @@ func (m *Model) renderMessage(msg openai.Message) string {
 		if msg.Content != "" {
 			block.WriteString("\n" + msg.Content)
 		}
-		return userBlockStyle.Width(m.vp.Width()-4).Render(block.String()) + "\n\n"
+		return userBlockStyle.Width(m.msgWidth()-4).Render(block.String()) + "\n\n"
 	}
 	rendered := msg.Content
 	if m.renderer != nil {
@@ -178,11 +194,14 @@ func (m *Model) renderMessage(msg openai.Message) string {
 	if label == "" {
 		label = m.chosen
 	}
-	return botBlockStyle.Width(m.vp.Width()-4).Render(
+	return botBlockStyle.Width(m.msgWidth()-4).Render(
 		botLabelStyle.Render(label)+"\n"+rendered) + "\n\n"
 }
 
 func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if fin, ok := msg.(editorFinishedMsg); ok {
+		return m.handleEditorFinished(fin)
+	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		if m.editingSystem {
 			return m.updateSystemPrompt(key)
@@ -250,6 +269,24 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.layoutChat()
 			return m, nil
+		case "ctrl+b":
+			// Copy just the last fenced code block of the last reply;
+			// ctrl+y copies the whole reply.
+			if m.waiting {
+				return m, nil
+			}
+			m.help.ShowAll = false
+			if reply, ok := m.lastMessage("assistant"); !ok {
+				m.chatNotice = "nothing to copy yet"
+			} else if code, ok := lastCodeBlock(reply); !ok {
+				m.chatNotice = "no code block in the last reply"
+			} else if err := clipboard.WriteText(code); err != nil {
+				m.chatNotice = "copy failed: " + err.Error()
+			} else {
+				m.chatNotice = "copied last code block"
+			}
+			m.layoutChat()
+			return m, nil
 		case "ctrl+r":
 			// Ask the current model again: drop the last reply and
 			// re-stream it. After a failed request (no reply arrived)
@@ -268,18 +305,37 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.waiting = true
 			return m, tea.Batch(m.spin.Tick, m.startStream())
 		case "up":
-			// With an empty composer, up recalls the last sent message for
-			// editing; otherwise up moves the cursor in the textarea below.
-			if !m.waiting && strings.TrimSpace(m.input.Value()) == "" {
-				if sent, ok := m.lastMessage("user"); ok {
-					prevHeight := m.input.Height()
-					m.input.SetValue(sent)
-					if m.input.Height() != prevHeight {
-						m.layoutChat()
-						m.vp.GotoBottom()
+			// With an empty composer, ↑ recalls the last sent message
+			// (with its attachments) for editing; on an unedited recall
+			// with the cursor on the first line it steps further back
+			// through the sent messages. Otherwise ↑ moves the cursor in
+			// the textarea below.
+			if !m.waiting {
+				if m.recallActive() && m.input.Line() == 0 {
+					if idx := m.prevUserMessage(m.recallIdx); idx >= 0 {
+						m.recallMessage(idx)
 					}
-					return m, nil
+					return m, nil // clamp at the oldest
 				}
+				if strings.TrimSpace(m.input.Value()) == "" {
+					if idx := m.prevUserMessage(len(m.messages)); idx >= 0 {
+						m.recallSavedImages = m.pendingImages
+						m.recallMessage(idx)
+						return m, nil
+					}
+				}
+			}
+		case "down":
+			// The inverse of ↑: on an unedited recall with the cursor on
+			// the last line, ↓ steps toward newer sent messages, and past
+			// the newest restores the pre-recall composer.
+			if !m.waiting && m.recallActive() && m.input.Line() == m.input.LineCount()-1 {
+				if idx := m.nextUserMessage(m.recallIdx); idx >= 0 {
+					m.recallMessage(idx)
+				} else {
+					m.exitRecall()
+				}
+				return m, nil
 			}
 		case "home":
 			m.vp.GotoTop()
@@ -296,6 +352,18 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.layoutChat()
 				return m, nil
 			}
+		case "ctrl+e":
+			// Compose in the user's editor: the terminal is handed over
+			// and the saved file replaces the composer on exit.
+			if m.waiting {
+				return m, nil
+			}
+			m.errText = ""
+			m.chatNotice = ""
+			m.help.ShowAll = false
+			cmd := m.openEditor()
+			m.layoutChat()
+			return m, cmd
 		case "ctrl+v":
 			// An image on the clipboard becomes an attachment; otherwise
 			// fall through and let the textarea paste it as text.
@@ -314,6 +382,7 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help.ShowAll = false
 			m.messages = append(m.messages, openai.Message{Role: "user", Content: text, Images: m.pendingImages})
 			m.pendingImages = nil
+			m.clearRecall()
 			m.input.SetValue("")
 			m.layoutChat()
 			m.vp.SetContent(m.conversationView())
@@ -330,6 +399,10 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		prevHeight := m.input.Height()
 		m.input, cmd = m.input.Update(msg)
+		if m.recallIdx >= 0 && m.input.Value() != m.recallText {
+			// The recalled message was edited; it is the draft now.
+			m.clearRecall()
+		}
 		if m.input.Height() != prevHeight {
 			m.layoutChat()
 			m.vp.GotoBottom()
@@ -381,6 +454,125 @@ func (m *Model) exitSystemPrompt() {
 	m.input.Placeholder = "Send a message…"
 	m.help.ShowAll = false
 	m.layoutChat()
+}
+
+// editorFinishedMsg reports the external editor exiting; path is the temp
+// file holding the composed message.
+type editorFinishedMsg struct {
+	path string
+	err  error
+}
+
+// openEditor hands the composer text to $VISUAL/$EDITOR via a temp file and
+// returns the command that runs the editor with the terminal released. The
+// result comes back to updateChat as an editorFinishedMsg.
+func (m *Model) openEditor() tea.Cmd {
+	editor := os.Getenv("VISUAL")
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		m.chatNotice = "set $EDITOR (or $VISUAL) to compose externally"
+		return nil
+	}
+	f, err := os.CreateTemp("", "oolong-compose-*.md")
+	if err != nil {
+		m.errText = "editor: " + err.Error()
+		return nil
+	}
+	path := f.Name()
+	_, werr := f.WriteString(m.input.Value())
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(path)
+		m.errText = "editor: " + werr.Error()
+		return nil
+	}
+	// $EDITOR may carry arguments ("code --wait"); split on whitespace.
+	parts := strings.Fields(editor)
+	cmd := exec.Command(parts[0], append(parts[1:], path)...)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return editorFinishedMsg{path: path, err: err}
+	})
+}
+
+// handleEditorFinished loads the edited file back into the composer and
+// cleans up the temp file. An editor that exited with an error leaves the
+// composer untouched.
+func (m Model) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea.Cmd) {
+	content, rerr := os.ReadFile(msg.path)
+	os.Remove(msg.path)
+	if msg.err != nil {
+		m.errText = "editor: " + msg.err.Error()
+		return m, nil
+	}
+	if rerr != nil {
+		m.errText = "editor: " + rerr.Error()
+		return m, nil
+	}
+	m.input.SetValue(strings.TrimRight(string(content), "\n"))
+	m.layoutChat()
+	m.vp.GotoBottom()
+	return m, nil
+}
+
+// recallActive reports whether the composer holds an unedited recalled
+// message. Any edit makes the value differ from recallText, which drops the
+// composer out of history stepping without needing an explicit reset.
+func (m Model) recallActive() bool {
+	return m.recallIdx >= 0 && m.input.Value() == m.recallText
+}
+
+// recallMessage loads the sent message at idx into the composer, including
+// its image attachments.
+func (m *Model) recallMessage(idx int) {
+	msg := m.messages[idx]
+	m.recallIdx = idx
+	m.recallText = msg.Content
+	m.input.SetValue(msg.Content)
+	m.pendingImages = slices.Clone(msg.Images)
+	m.layoutChat()
+	m.vp.GotoBottom()
+}
+
+// exitRecall restores the composer to the state before recall started: empty
+// text, plus any attachments that were already pending.
+func (m *Model) exitRecall() {
+	m.input.SetValue("")
+	m.pendingImages = m.recallSavedImages
+	m.clearRecall()
+	m.layoutChat()
+	m.vp.GotoBottom()
+}
+
+func (m *Model) clearRecall() {
+	m.recallIdx = -1
+	m.recallText = ""
+	m.recallSavedImages = nil
+}
+
+// prevUserMessage returns the index of the last user message before i, -1
+// when there is none.
+func (m Model) prevUserMessage(i int) int {
+	for i--; i >= 0; i-- {
+		if m.messages[i].Role == "user" {
+			return i
+		}
+	}
+	return -1
+}
+
+// nextUserMessage returns the index of the first user message after i, -1
+// when there is none.
+func (m Model) nextUserMessage(i int) int {
+	for i++; i < len(m.messages); i++ {
+		if m.messages[i].Role == "user" {
+			return i
+		}
+	}
+	return -1
 }
 
 // lastMessage returns the content of the most recent message with the

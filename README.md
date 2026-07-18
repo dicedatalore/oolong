@@ -64,7 +64,7 @@ To remove a stored key: press `ctrl+k` on the model picker, or run `oolong --res
 
 ## Configuration
 
-Oolong is fully usable with no configuration. To customize it, create `~/.config/oolong/config.toml` (`$XDG_CONFIG_HOME` is respected); every key is optional:
+Oolong is fully usable with no configuration. To customize it, run `oolong config init` to scaffold a commented `~/.config/oolong/config.toml` (`$XDG_CONFIG_HOME` is respected); every key is optional:
 
 ```toml
 default_model = "gpt-5.6-terra"   # skip the picker on launch
@@ -83,6 +83,8 @@ reasoning_effort = "medium"  # gpt-5.6 takes none | low | medium | high | xhigh
 verbosity = "low"            # low | medium | high
 ```
 
+For a single run, `oolong --model <id>` opens a chat directly with any model your key can access, overriding `default_model`.
+
 `reasoning_effort` and `verbosity` set the model's default [Responses API](https://platform.openai.com/docs/api-reference/responses) parameters. They're passed through as-is — the supported values vary by model generation, and the API reports clearly if a model rejects one. On the model picker, `←`/`→` adjust the selected model's effort for the session, shown in the list item and later in the chat header. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
 
 ## Keybindings
@@ -92,9 +94,11 @@ verbosity = "low"            # low | medium | high
 | `enter` | Send message |
 | `shift+enter` / `ctrl+j` | Insert newline |
 | `ctrl+v` | Paste (a clipboard image becomes an attachment) |
+| `ctrl+e` | Compose the message in `$EDITOR` |
 | `ctrl+y` | Copy the last reply to the clipboard |
+| `ctrl+b` | Copy the last reply's last code block |
 | `ctrl+r` | Regenerate the last reply |
-| `↑` | Recall your last message (when the composer is empty) |
+| `↑` / `↓` | Cycle through your sent messages, attachments included (when the composer is empty) |
 | `ctrl+n` | Start a new chat |
 | `ctrl+p` | Edit the system prompt |
 | `ctrl+s` | Save transcript to markdown |
@@ -104,7 +108,7 @@ verbosity = "low"            # low | medium | high
 | `ctrl+c` | Quit |
 | `?` | Toggle full help |
 
-On the model picker, `←`/`→` adjust the selected model's reasoning effort before the chat starts.
+On the model picker, `←`/`→` adjust the selected model's reasoning effort before the chat starts, and `esc` clears an active filter before it quits.
 
 The mouse wheel scrolls the conversation too; hold `shift` while dragging to select text, as usual in TUIs.
 

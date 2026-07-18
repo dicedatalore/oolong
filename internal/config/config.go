@@ -91,6 +91,48 @@ func Load() (Config, error) {
 	return parse(string(data))
 }
 
+// scaffold is the fully-commented starter config written by `oolong config
+// init`. Every key is commented out, so the file parses as the zero config
+// until the user uncomments something.
+const scaffold = `# Oolong configuration — every key is optional; delete what you don't use.
+# Docs: https://github.com/dicedatalore/oolong#configuration
+
+# Open this model on launch instead of the picker.
+# default_model = "gpt-5.6-terra"
+
+# Where ctrl+s saves transcripts (the OOLONG_TRANSCRIPT_DIR env var wins).
+# transcript_dir = "~/notes/chats"
+
+# Primary accent color.
+# accent = "#FFAF87"
+
+# Replaces the built-in model catalog when present. Any model your API key
+# can access works; unavailable models are hidden from the picker.
+# [[models]]
+# id = "gpt-5.6-terra"
+# description = "Balances intelligence and cost"
+# input_rate = 2.50            # USD per 1M input tokens
+# output_rate = 15.00          # USD per 1M output tokens
+# reasoning_effort = "medium"  # none | low | medium | high | xhigh (model-dependent)
+# verbosity = "low"            # low | medium | high
+`
+
+// Init writes the scaffold config file and returns its path. An existing
+// config is never overwritten.
+func Init() (string, error) {
+	path := Path()
+	if path == "" {
+		return "", fmt.Errorf("config: cannot determine the config directory")
+	}
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("config already exists: %s", path)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	return path, os.WriteFile(path, []byte(scaffold), 0o644)
+}
+
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 // parse decodes and validates one config document. Split from Load so tests

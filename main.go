@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/glamour/styles"
@@ -19,6 +20,7 @@ import (
 func main() {
 	resetKey := flag.Bool("reset-key", false, "delete the stored OpenAI API key from the OS keychain and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	model := flag.String("model", "", "open a chat with this model id, skipping the picker")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("oolong " + version.String())
@@ -32,10 +34,29 @@ func main() {
 		fmt.Println("Stored API key deleted.")
 		return
 	}
+	if args := flag.Args(); len(args) > 0 {
+		if len(args) == 2 && args[0] == "config" && args[1] == "init" {
+			path, err := config.Init()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			fmt.Println("Wrote " + path)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "unknown command %q (did you mean \"config init\"?)\n", strings.Join(args, " "))
+		os.Exit(2)
+	}
 
 	// A bad config file must never block launch: Load always returns a
 	// usable config, and the error surfaces as a notice inside the UI.
 	cfg, cfgErr := config.Load()
+	if *model != "" {
+		// The flag wins over the config's default_model and is passed
+		// through unvalidated: any model the API key can access works,
+		// and a typo surfaces as a clear API error on the first send.
+		cfg.DefaultModel = *model
+	}
 	var cfgNotice string
 	if cfgErr != nil {
 		cfgNotice = cfgErr.Error()

@@ -92,6 +92,12 @@ type Model struct {
 	streaming     bool     // an in-progress assistant message is the last element of messages
 	pendingImages [][]byte // pasted images sent with the next message
 
+	// ↑/↓ history recall: the composer steps through previously sent
+	// messages while it holds an unedited recall (see recallActive).
+	recallIdx         int      // index into messages of the recalled message; -1 when none
+	recallText        string   // the text recallIdx was recalled as, to detect edits
+	recallSavedImages [][]byte // pendingImages stashed when recall started
+
 	// system prompt editing (ctrl+p repurposes the chat input)
 	systemPrompt  string
 	editingSystem bool   // the input textarea is editing the system prompt
@@ -142,6 +148,7 @@ func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string
 		client:        client,
 		logo:          renderLogoHeader(),
 		transcriptDir: cfg.TranscriptDir,
+		recallIdx:     -1,
 	}
 	m.initCmd = sparkleTick(0)
 	if cfg.CustomCatalog() {

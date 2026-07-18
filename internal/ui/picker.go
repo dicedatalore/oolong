@@ -259,7 +259,16 @@ func (m Model) handleSparkle(msg sparkleMsg) (tea.Model, tea.Cmd) {
 func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok && m.picker.FilterState() != list.Filtering {
 		switch key.String() {
-		case "esc", "ctrl+c":
+		case "esc":
+			// With a filter applied, esc backs out of the filter first;
+			// only an unfiltered picker quits. (While the filter is being
+			// typed, esc never reaches here — the list cancels it.)
+			if m.picker.FilterState() == list.FilterApplied {
+				m.picker.ResetFilter()
+				return m, nil
+			}
+			return m, tea.Quit
+		case "ctrl+c":
 			return m, tea.Quit
 		case "ctrl+n":
 			// Discard the kept conversation and stay on the picker.
