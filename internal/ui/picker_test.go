@@ -2,6 +2,7 @@ package ui
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,6 +12,18 @@ import (
 
 	"github.com/dicedatalore/oolong/internal/config"
 )
+
+// newBuiltinPicker builds a sized picker over the full built-in catalog:
+// mocked keyring, both provider keys supplied via env.
+func newBuiltinPicker(t *testing.T, cfg config.Config) tea.Model {
+	t.Helper()
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	var model tea.Model = New(nil, "dark", cfg, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 28})
+	return model
+}
 
 func TestPickerHelpHasNoFullHelpToggle(t *testing.T) {
 	var model tea.Model = New(nil, "dark", config.Config{}, "")
@@ -102,7 +115,114 @@ func TestPickerEscClearsAppliedFilterBeforeQuitting(t *testing.T) {
 	}
 }
 
+func TestPickerGroupsModelsUnderProviderHeaders(t *testing.T) {
+	model := newBuiltinPicker(t, config.Config{})
+	am := model.(Model)
+	if got := pickerHeaders(am); !slices.Equal(got, []string{"OpenAI", "Anthropic"}) {
+		t.Fatalf("headers = %v, want [OpenAI Anthropic]", got)
+	}
+	if _, ok := am.picker.Items()[0].(headerItem); !ok {
+		t.Error("the first row is not a provider header")
+	}
+	if _, ok := am.picker.SelectedItem().(modelItem); !ok {
+		t.Error("the initial selection is not a model row")
+	}
+	if strings.Contains(am.viewPicker(), "Pick a model") {
+		t.Error("picker still shows the old title")
+	}
+}
+
+func TestPickerCursorSkipsProviderHeaders(t *testing.T) {
+	model := newBuiltinPicker(t, config.Config{})
+	selected := func() string {
+		return model.(Model).picker.SelectedItem().(modelItem).id
+	}
+	if got := selected(); got != "gpt-5.6-luna" {
+		t.Fatalf("initial selection = %q, want the first model", got)
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if got := selected(); got != "gpt-5.6-luna" {
+		t.Errorf("up from the first model landed on %q, want no move", got)
+	}
+	for range 3 {
+		model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if got := selected(); got != "claude-sonnet-5" {
+		t.Errorf("down across the provider boundary landed on %q, want claude-sonnet-5", got)
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if got := selected(); got != "gpt-5.6-sol" {
+		t.Errorf("up across the provider boundary landed on %q, want gpt-5.6-sol", got)
+	}
+}
+
+func TestPickerTabTogglesSimpleView(t *testing.T) {
+	model := newBuiltinPicker(t, config.Config{})
+	// Cross into the Anthropic group so the toggle has a selection to keep.
+	for range 3 {
+		model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	am := model.(Model)
+	if !am.simplePicker {
+		t.Fatal("tab did not enable the simple view")
+	}
+	if h := pickerHeaders(am); h != nil {
+		t.Errorf("simple view still shows provider headers: %v", h)
+	}
+	if got := am.picker.SelectedItem().(modelItem).id; got != "claude-sonnet-5" {
+		t.Errorf("toggling moved the selection to %q, want claude-sonnet-5", got)
+	}
+	if strings.Contains(am.viewPicker(), "Balanced speed") {
+		t.Error("simple view still renders model descriptions")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	am = model.(Model)
+	if am.simplePicker {
+		t.Fatal("a second tab did not restore the full view")
+	}
+	if got := pickerHeaders(am); len(got) != 2 {
+		t.Errorf("full view headers = %v, want both providers back", got)
+	}
+	if got := am.picker.SelectedItem().(modelItem).id; got != "claude-sonnet-5" {
+		t.Errorf("selection after the round trip = %q, want claude-sonnet-5", got)
+	}
+}
+
+func TestSimplePickerConfigStartsSimple(t *testing.T) {
+	model := newBuiltinPicker(t, config.Config{SimplePicker: true})
+	am := model.(Model)
+	if !am.simplePicker {
+		t.Fatal("simple_picker did not enable the simple view")
+	}
+	if h := pickerHeaders(am); h != nil {
+		t.Errorf("simple view shows provider headers: %v", h)
+	}
+}
+
 var ansi = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// pickerModels returns the picker's model rows, skipping provider headers.
+func pickerModels(m Model) []modelItem {
+	var models []modelItem
+	for _, item := range m.picker.Items() {
+		if mi, ok := item.(modelItem); ok {
+			models = append(models, mi)
+		}
+	}
+	return models
+}
+
+// pickerHeaders returns the names of the picker's provider header rows.
+func pickerHeaders(m Model) []string {
+	var headers []string
+	for _, item := range m.picker.Items() {
+		if h, ok := item.(headerItem); ok {
+			headers = append(headers, h.name)
+		}
+	}
+	return headers
+}
 
 func TestPickerLogoIsCentered(t *testing.T) {
 	var model tea.Model = New(nil, "dark", config.Config{}, "")

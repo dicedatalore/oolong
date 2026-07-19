@@ -37,6 +37,7 @@ type Config struct {
 	DefaultModel  string  `toml:"default_model"`  // skip the picker on launch when set
 	TranscriptDir string  `toml:"transcript_dir"` // OOLONG_TRANSCRIPT_DIR env var still wins
 	Accent        string  `toml:"accent"`         // primary accent color, "#RRGGBB"
+	SimplePicker  bool    `toml:"simple_picker"`  // start the model picker in its simple view
 	BaseURL       string  `toml:"base_url"`       // optional provider endpoint for every model
 	Provider      string  `toml:"provider"`       // blank preserves the OpenAI default
 	Models        []Model `toml:"models"`         // replaces the built-in catalog when present
@@ -144,6 +145,10 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 
 # Primary accent color.
 # accent = "#FFAF87"
+
+# Start the model picker in its simple view: one line per model, no
+# descriptions or rates. Tab toggles the views either way.
+# simple_picker = true
 
 # Any OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter, …). Applies
 # to every model unless one sets its own base_url below. The OPENAI_BASE_URL

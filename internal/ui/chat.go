@@ -740,9 +740,9 @@ func (m Model) viewChat() string {
 	var ctxWarn string
 	if pct, ok := m.contextUsed(); ok {
 		if pct >= 80 {
-			ctxWarn = errorStyle.Render(fmt.Sprintf(" • ctx %d%% full", pct))
+			ctxWarn = errorStyle.Render(fmt.Sprintf(" • context %d%% full", pct))
 		} else {
-			cost += fmt.Sprintf(" • ctx %d%%", pct)
+			cost += fmt.Sprintf(" • context %d%%", pct)
 		}
 	}
 	header := headerBarStyle.Render(headerStyle.Render(m.chosen) + helpStyle.Render("  "+cost) + ctxWarn)

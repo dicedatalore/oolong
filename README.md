@@ -14,7 +14,7 @@
 
 - **Streaming responses** rendered as markdown with syntax-highlighted code blocks
 - **Ephemeral by design** — history is kept in memory only, and requests are sent with response storage disabled on OpenAI's side
-- **Model picker** with per-model pricing, plus a live token count and cost estimate in the chat header
+- **Model picker** grouped by provider with per-model pricing (`tab` switches to a simple names-only view), plus a live token count and cost estimate in the chat header
 - **Mid-chat model switch** — `esc` back to the picker keeps the conversation, so you can escalate to a bigger model halfway through
 - **Image input** — paste an image from the clipboard (`ctrl+v`) and it's attached to your next message
 - **File attachments** — `ctrl+f` picks an image or text file from disk to send with your next message
@@ -79,6 +79,7 @@ The catalog below demonstrates all three clients in one configuration. Adding an
 default_model = "gpt-5.6-terra"   # skip the picker on launch
 transcript_dir = "~/notes/chats"  # OOLONG_TRANSCRIPT_DIR still wins
 accent = "#FFAF87"                # primary accent color
+simple_picker = true              # start the picker in its simple view (tab toggles)
 
 # OpenAI client — uses the official Responses API when base_url is omitted.
 [[models]]
@@ -174,7 +175,7 @@ The conversation, system prompt, and model are restored from the file (image and
 | `ctrl+c` | Quit |
 | `?` | Toggle full help |
 
-On the model picker, `←`/`→` adjust the selected model's reasoning effort before the chat starts, and `esc` clears an active filter before it quits.
+On the model picker, `←`/`→` adjust the selected model's reasoning effort before the chat starts, `tab` toggles between the full view (descriptions, rates, provider headings) and a simple one-line-per-model view, and `esc` clears an active filter before it quits. Set `simple_picker = true` in the config to start in the simple view.
 
 The mouse wheel scrolls the conversation too; hold `shift` while dragging to select text, as usual in TUIs.
 

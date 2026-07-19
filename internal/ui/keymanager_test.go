@@ -60,14 +60,14 @@ func TestDefaultModelsAppearOnlyForRelevantKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.refreshBuiltinCatalog()
-	if got, want := len(model.picker.Items()), builtinProviderCount("anthropic"); got != want {
+	if got, want := len(pickerModels(model)), builtinProviderCount("anthropic"); got != want {
 		t.Errorf("Anthropic key exposed %d defaults, want %d Anthropic defaults", got, want)
 	}
 	if err := keystore.Set(keystore.OpenAI, "sk-test"); err != nil {
 		t.Fatal(err)
 	}
 	model.refreshBuiltinCatalog()
-	if got := len(model.picker.Items()); got != len(config.Builtin) {
+	if got := len(pickerModels(model)); got != len(config.Builtin) {
 		t.Errorf("OpenAI key exposed %d defaults, want %d", got, len(config.Builtin))
 	}
 }

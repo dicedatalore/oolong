@@ -36,6 +36,7 @@ func TestParse(t *testing.T) {
 default_model = "gpt-5.4"
 transcript_dir = "~/notes/chats"
 accent = "#FFAF87"
+simple_picker = true
 
 [[models]]
 id = "gpt-5.4"
@@ -48,6 +49,9 @@ verbosity = "low"
 			check: func(c Config) string {
 				if c.DefaultModel != "gpt-5.4" || c.TranscriptDir != "~/notes/chats" || c.Accent != "#FFAF87" {
 					return "scalar fields not parsed"
+				}
+				if !c.SimplePicker {
+					return "simple_picker not parsed"
 				}
 				if !c.CustomCatalog() || len(c.Catalog()) != 1 {
 					return "custom catalog not used"

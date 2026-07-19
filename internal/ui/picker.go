@@ -6,6 +6,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strings"
@@ -28,30 +29,90 @@ type modelRates struct {
 }
 
 // setCatalog makes models the active catalog: it rebuilds the rates map and
-// the picker rows from it. The catalog starts as the config's (or built-in)
-// list in New and shrinks when the availability check drops models. It is
-// cloned because the picker's effort keys edit entries in place, and the
-// source may be the shared config.Builtin slice.
+// the picker rows from it, grouped by provider. The catalog starts as the
+// config's (or built-in) list in New and shrinks when the availability check
+// drops models. Grouping copies into a fresh slice, which also keeps the
+// picker's in-place effort edits away from the shared config.Builtin slice.
+// In the full view each provider group sits under its own header row; the
+// simple view lists the models bare.
 func (m *Model) setCatalog(models []config.Model) {
-	m.catalog = slices.Clone(models)
-	m.rates = ratesFrom(models)
-	items := make([]list.Item, 0, len(models))
-	for _, cm := range models {
+	m.catalog = m.groupByProvider(models)
+	m.rates = ratesFrom(m.catalog)
+	items := make([]list.Item, 0, len(m.catalog)+3)
+	prevProvider := ""
+	for _, cm := range m.catalog {
+		if p := m.resolvedProvider(cm.Provider); !m.simplePicker && p != prevProvider {
+			items = append(items, headerItem{name: providerTitle(p)})
+			prevProvider = p
+		}
 		items = append(items, newModelItem(cm))
 	}
 	m.picker.SetItems(items)
-	m.picker.AdditionalShortHelpKeys = pickerAdditionalHelp(len(models) > 0)
+	m.picker.AdditionalShortHelpKeys = pickerAdditionalHelp(len(m.catalog) > 0, m.simplePicker)
+	m.settleSelection()
 }
 
-func pickerAdditionalHelp(hasModels bool) func() []key.Binding {
+// groupByProvider reorders a catalog so each provider's models sit together,
+// providers in order of first appearance and models in catalog order within
+// their group. The result is always a fresh slice.
+func (m Model) groupByProvider(models []config.Model) []config.Model {
+	var order []string
+	groups := make(map[string][]config.Model)
+	for _, cm := range models {
+		p := m.resolvedProvider(cm.Provider)
+		if _, ok := groups[p]; !ok {
+			order = append(order, p)
+		}
+		groups[p] = append(groups[p], cm)
+	}
+	grouped := make([]config.Model, 0, len(models))
+	for _, p := range order {
+		grouped = append(grouped, groups[p]...)
+	}
+	return grouped
+}
+
+// resolvedProvider applies the fallback chain a model's provider field goes
+// through everywhere else: the global provider, then OpenAI.
+func (m Model) resolvedProvider(provider string) string {
+	if provider == "" {
+		provider = m.provider
+	}
+	if provider == "" {
+		return "openai"
+	}
+	return provider
+}
+
+// providerTitle is the display name a provider's picker header shows.
+func providerTitle(provider string) string {
+	switch provider {
+	case "openai":
+		return "OpenAI"
+	case "anthropic":
+		return "Anthropic"
+	case "ollama":
+		return "Ollama"
+	}
+	return provider
+}
+
+func pickerAdditionalHelp(hasModels, simple bool) func() []key.Binding {
 	return func() []key.Binding {
-		bindings := make([]key.Binding, 0, 2)
+		bindings := make([]key.Binding, 0, 3)
 		if hasModels {
 			bindings = append(bindings,
 				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "reasoning effort")))
 		}
+		viewLabel := "simple view"
+		if simple {
+			viewLabel = "full view"
+		}
+		// tab goes last: on narrow windows the help bar truncates from the
+		// right, and the view toggle is the hint best afforded to lose.
 		return append(bindings,
-			key.NewBinding(key.WithKeys("ctrl+k"), key.WithHelp("ctrl+k", "key manager")))
+			key.NewBinding(key.WithKeys("ctrl+k"), key.WithHelp("ctrl+k", "key manager")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", viewLabel)))
 	}
 }
 
@@ -111,6 +172,13 @@ func (m Model) modelConfig(id string) config.Model {
 	return config.Model{}
 }
 
+// headerItem is a provider heading above a group of models in the full view.
+// It is a label, not a choice: navigation hops over it (see skipHeader) and
+// its empty filter value keeps it out of filtered lists.
+type headerItem struct{ name string }
+
+func (h headerItem) FilterValue() string { return "" }
+
 // modelItem is one row of the picker. Its three methods satisfy the list
 // bubble's Item interface — Go interfaces are implemented implicitly, so
 // there is no "implements" declaration to look for.
@@ -150,16 +218,47 @@ func price(v float64) string {
 	return fmt.Sprintf("$%.2f", v)
 }
 
-func newPicker() list.Model {
-	var items []list.Item
+// pickerDelegate renders provider header rows itself and hands model rows to
+// the wrapped default delegate.
+type pickerDelegate struct{ list.DefaultDelegate }
+
+func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	h, ok := item.(headerItem)
+	if !ok {
+		d.DefaultDelegate.Render(w, m, index, item)
+		return
+	}
+	// A blank line separates the header from the group above; the top of the
+	// list needs no separator. The two-space indent lines the header up with
+	// the model titles beneath it.
+	if index > 0 {
+		io.WriteString(w, "\n")
+	}
+	io.WriteString(w, "  "+headerStyle.Render(h.name))
+}
+
+// newPickerDelegate builds the row renderer for the requested view: the full
+// view shows a description line under each model with a blank row between,
+// the simple view packs bare one-line rows.
+func newPickerDelegate(simple bool) pickerDelegate {
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
 		Foreground(peach).BorderForeground(peach)
 	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
 		Foreground(peachDim).BorderForeground(peach)
-	picker := list.New(items, delegate, 0, 0)
-	picker.Title = "Pick a model"
-	picker.Styles.Title = headerStyle
+	delegate.ShowDescription = !simple
+	if simple {
+		delegate.SetSpacing(0)
+	}
+	return pickerDelegate{delegate}
+}
+
+func newPicker(simple bool) list.Model {
+	var items []list.Item
+	picker := list.New(items, newPickerDelegate(simple), 0, 0)
+	// Provider headers between the rows serve as the picker's titles; the
+	// title bar area stays reserved for the filter input.
+	picker.SetShowTitle(false)
 	picker.Styles.ActivePaginationDot = picker.Styles.ActivePaginationDot.Foreground(peach)
 	picker.SetShowStatusBar(false)
 	// Help renders separately in viewPicker so the list block can be centered
@@ -175,8 +274,47 @@ func newPicker() list.Model {
 	picker.KeyMap.NextPage = key.NewBinding()
 	picker.KeyMap.PrevPage = key.NewBinding()
 	picker.KeyMap.Quit = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "quit"))
-	picker.AdditionalShortHelpKeys = pickerAdditionalHelp(false)
+	picker.AdditionalShortHelpKeys = pickerAdditionalHelp(false, simple)
 	return picker
+}
+
+// settleSelection moves the selection off a provider header, which can end up
+// selected after the rows are rebuilt.
+func (m *Model) settleSelection() {
+	if _, ok := m.picker.SelectedItem().(headerItem); !ok {
+		return
+	}
+	if i := m.picker.Index() + 1; i < len(m.picker.VisibleItems()) {
+		m.picker.Select(i)
+	}
+}
+
+// skipHeader hops the cursor over a provider header after the list moves,
+// continuing in the direction of travel; from the top-of-list header the only
+// way is down. prev is the selected index before the move.
+func (m *Model) skipHeader(prev int) {
+	// Two hops cover the worst case (the top of the list); headers are never
+	// adjacent, so a hop always lands on a model row.
+	for range 2 {
+		if _, ok := m.picker.SelectedItem().(headerItem); !ok {
+			return
+		}
+		if i := m.picker.Index(); i == 0 || i > prev {
+			m.picker.CursorDown()
+		} else {
+			m.picker.CursorUp()
+		}
+	}
+}
+
+// selectModel puts the cursor on the given model's row, if it is visible.
+func (m *Model) selectModel(id string) {
+	for i, item := range m.picker.VisibleItems() {
+		if mi, ok := item.(modelItem); ok && mi.id == id {
+			m.picker.Select(i)
+			return
+		}
+	}
 }
 
 // stepEffort moves one step along the effort ladder — model default at the
@@ -330,6 +468,19 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+k":
 			return m, m.openKeyManager()
+		case "tab":
+			// Toggle between the full view (descriptions, rates, provider
+			// headers) and the simple one-line view, keeping the selection.
+			var selected string
+			if item, ok := m.picker.SelectedItem().(modelItem); ok {
+				selected = item.id
+			}
+			m.picker.ResetFilter()
+			m.simplePicker = !m.simplePicker
+			m.picker.SetDelegate(newPickerDelegate(m.simplePicker))
+			m.setCatalog(m.catalog)
+			m.selectModel(selected)
+			return m, nil
 		case "left":
 			return m, m.adjustEffort(-1)
 		case "right":
@@ -347,7 +498,9 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	var cmd tea.Cmd
+	prev := m.picker.Index()
 	m.picker, cmd = m.picker.Update(msg)
+	m.skipHeader(prev)
 	return m, cmd
 }
 

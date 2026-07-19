@@ -79,8 +79,9 @@ type Model struct {
 	clients map[string]openai.ChatClient
 
 	// model picker
-	picker list.Model
-	chosen string // id of the picked model, e.g. "gpt-5.6-terra"
+	picker       list.Model
+	simplePicker bool   // compact one-line rows; tab toggles, simple_picker seeds
+	chosen       string // id of the picked model, e.g. "gpt-5.6-terra"
 
 	// chat
 	input    textarea.Model // message composer
@@ -158,7 +159,8 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 	}
 	m := Model{
 		state:             statePicker,
-		picker:            newPicker(),
+		picker:            newPicker(cfg.SimplePicker),
+		simplePicker:      cfg.SimplePicker,
 		input:             newChatInput(),
 		openAIKeyInput:    newKeyInput("sk-..."),
 		anthropicKeyInput: newKeyInput("sk-ant-..."),

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/zalando/go-keyring"
 
 	"github.com/dicedatalore/oolong/internal/config"
 )
@@ -26,9 +27,13 @@ func customCatalog() []config.Model {
 }
 
 // newCustomModel builds a sized model with a custom catalog whose
-// availability check is still outstanding.
+// availability check is still outstanding. The keyring is mocked and the key
+// env vars cleared so no test reads real credentials.
 func newCustomModel(t *testing.T, srv *httptest.Server, cfg config.Config) tea.Model {
 	t.Helper()
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	var model tea.Model = New(clientFor(srv), "dark", cfg, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return model
@@ -54,13 +59,13 @@ func TestCustomCatalogWaitsForAvailabilityCheck(t *testing.T) {
 
 	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{"gpt-5.4": true, "gpt-5.6-terra": true}})
 	am = model.(Model)
-	if n := len(am.picker.Items()); n != 2 {
-		t.Fatalf("picker shows %d items after the check, want 2", n)
+	if n := len(pickerModels(am)); n != 2 {
+		t.Fatalf("picker shows %d models after the check, want 2", n)
 	}
 	if am.keyNotice != "" {
 		t.Errorf("keyNotice = %q, want empty after a clean check", am.keyNotice)
 	}
-	item := am.picker.Items()[0].(modelItem)
+	item := pickerModels(am)[0]
 	if item.id != "gpt-5.4" || !strings.Contains(item.desc, "$1.25 in / $10 out") {
 		t.Errorf("first item = %+v, want gpt-5.4 with rates", item)
 	}
@@ -73,10 +78,10 @@ func TestAvailabilityCheckDropsUnknownModels(t *testing.T) {
 	model := newCustomModel(t, srv, config.Config{Models: customCatalog()})
 	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{"gpt-5.6-terra": true}})
 	am := model.(Model)
-	if n := len(am.picker.Items()); n != 1 {
-		t.Fatalf("picker shows %d items, want 1", n)
+	if n := len(pickerModels(am)); n != 1 {
+		t.Fatalf("picker shows %d models, want 1", n)
 	}
-	if am.picker.Items()[0].(modelItem).id != "gpt-5.6-terra" {
+	if pickerModels(am)[0].id != "gpt-5.6-terra" {
 		t.Error("wrong model survived the availability check")
 	}
 	if !strings.Contains(am.keyNotice, "gpt-5.4") {
@@ -91,8 +96,8 @@ func TestAvailabilityCheckFallsBackWhenNothingAvailable(t *testing.T) {
 	model := newCustomModel(t, srv, config.Config{Models: customCatalog()})
 	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{}})
 	am := model.(Model)
-	if n, want := len(am.picker.Items()), builtinProviderCount("openai"); n != want {
-		t.Fatalf("picker shows %d items, want the %d OpenAI built-ins", n, want)
+	if n, want := len(pickerModels(am)), builtinProviderCount("openai"); n != want {
+		t.Fatalf("picker shows %d models, want the %d OpenAI built-ins", n, want)
 	}
 	if !strings.Contains(am.keyNotice, "built-in") {
 		t.Errorf("keyNotice = %q, want a fallback notice", am.keyNotice)
@@ -106,8 +111,8 @@ func TestAvailabilityCheckErrorShowsWholeCatalog(t *testing.T) {
 	model := newCustomModel(t, srv, config.Config{Models: customCatalog()})
 	model, _ = model.Update(modelsCheckMsg{err: errors.New("timeout")})
 	am := model.(Model)
-	if n := len(am.picker.Items()); n != 2 {
-		t.Fatalf("picker shows %d items after a failed check, want all 2", n)
+	if n := len(pickerModels(am)); n != 2 {
+		t.Fatalf("picker shows %d models after a failed check, want all 2", n)
 	}
 	if !strings.Contains(am.keyNotice, "couldn't verify") {
 		t.Errorf("keyNotice = %q, want a verification warning", am.keyNotice)
@@ -124,8 +129,8 @@ func TestCustomEndpointSkipsAvailabilityCheck(t *testing.T) {
 	if am.pendingCatalog != nil {
 		t.Error("custom endpoint left the catalog waiting on the availability check")
 	}
-	if n := len(am.picker.Items()); n != 2 {
-		t.Errorf("picker shows %d items, want the full catalog immediately", n)
+	if n := len(pickerModels(am)); n != 2 {
+		t.Errorf("picker shows %d models, want the full catalog immediately", n)
 	}
 	if strings.Contains(am.keyNotice, "checking") {
 		t.Errorf("keyNotice = %q, want no checking notice", am.keyNotice)
@@ -142,10 +147,10 @@ func TestAvailabilityCheckKeepsModelsWithOwnEndpoint(t *testing.T) {
 	// Neither model is in the OpenAI list, but the first lives elsewhere.
 	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{}})
 	am := model.(Model)
-	if n := len(am.picker.Items()); n != 1 {
-		t.Fatalf("picker shows %d items, want 1", n)
+	if n := len(pickerModels(am)); n != 1 {
+		t.Fatalf("picker shows %d models, want 1", n)
 	}
-	if am.picker.Items()[0].(modelItem).id != "gpt-5.4" {
+	if pickerModels(am)[0].id != "gpt-5.4" {
 		t.Error("the model with its own endpoint did not survive the check")
 	}
 	if !strings.Contains(am.keyNotice, "gpt-5.6-terra") {

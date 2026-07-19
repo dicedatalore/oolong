@@ -636,14 +636,14 @@ func TestContextMeterInHeader(t *testing.T) {
 	// The built-in catalog knows the window size (400k tokens).
 	model := enterChat(t, srv)
 	am := model.(Model)
-	if v := am.viewChat(); !strings.Contains(v, "ctx 0%") {
+	if v := am.viewChat(); !strings.Contains(v, "context 0%") {
 		t.Error("header missing the context meter for a built-in model")
 	}
 
 	// 1.28M chars ≈ 320k tokens = 80% of the window: the meter becomes a
 	// warning.
 	am.messages = []openai.Message{{Role: "user", Content: strings.Repeat("a", 1_280_000)}}
-	if v := am.viewChat(); !strings.Contains(v, "ctx 80% full") {
+	if v := am.viewChat(); !strings.Contains(v, "context 80% full") {
 		t.Error("header missing the near-full warning at 80%")
 	}
 
@@ -653,7 +653,7 @@ func TestContextMeterInHeader(t *testing.T) {
 		Models:       []config.Model{{ID: "mystery"}},
 	}
 	model = newCustomModel(t, srv, cfg)
-	if v := model.(Model).viewChat(); strings.Contains(v, "ctx ") {
+	if v := model.(Model).viewChat(); strings.Contains(v, "context ") {
 		t.Error("header shows a context meter without a window size")
 	}
 }
