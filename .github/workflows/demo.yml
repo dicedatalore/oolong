@@ -46,7 +46,7 @@ jobs:
           go install github.com/charmbracelet/vhs@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: ./demo/record.sh
-      - uses: stefanzweifel/git-auto-commit-action@v6
+      - uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore: update demo GIF"
           file_pattern: demo/demo.gif

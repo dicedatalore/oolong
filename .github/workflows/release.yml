@@ -40,13 +40,43 @@ jobs:
       # Release gate: a red main must not get tagged and shipped.
       - run: go build ./...
       - run: go test ./...
+      # Inlined replacement for mathieudutour/github-tag-action, which is
+      # unmaintained and stuck on the deprecated node20 runtime: breaking
+      # (! marker or BREAKING CHANGE footer) → major, feat → minor, fix →
+      # patch. No feat/fix/breaking commits since the last tag → no new tag
+      # (new_tag stays empty and the goreleaser job is skipped). The push
+      # uses the checkout's GITHUB_TOKEN credentials, so it deliberately
+      # does not retrigger this workflow, same as the action did.
       - id: bump
-        uses: mathieudutour/github-tag-action@v6.2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          # No feat/fix/breaking commits since the last tag → no new tag
-          # (new_tag stays empty and the goreleaser job is skipped).
-          default_bump: false
+        run: |
+          if last=$(git describe --tags --abbrev=0 2>/dev/null); then
+            range="$last..HEAD"
+          else
+            last=v0.0.0
+            range=HEAD
+          fi
+          subjects=$(git log --format=%s "$range")
+          bodies=$(git log --format=%b "$range")
+          if grep -qE '^[a-z]+(\([^)]+\))?!: ' <<<"$subjects" || grep -q '^BREAKING CHANGE' <<<"$bodies"; then
+            bump=major
+          elif grep -qE '^feat(\([^)]+\))?: ' <<<"$subjects"; then
+            bump=minor
+          elif grep -qE '^fix(\([^)]+\))?: ' <<<"$subjects"; then
+            bump=patch
+          else
+            echo "no feat/fix/breaking commits since $last; not tagging"
+            exit 0
+          fi
+          IFS=. read -r major minor patch <<<"${last#v}"
+          case $bump in
+            major) new_tag="v$((major + 1)).0.0" ;;
+            minor) new_tag="v$major.$((minor + 1)).0" ;;
+            patch) new_tag="v$major.$minor.$((patch + 1))" ;;
+          esac
+          git tag "$new_tag"
+          git push origin "$new_tag"
+          echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
+          echo "tagged $new_tag ($bump bump from $last)"
 
   goreleaser:
     needs: [tag]
