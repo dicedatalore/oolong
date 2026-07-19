@@ -12,6 +12,7 @@ import (
 
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/oneshot"
 	"github.com/dicedatalore/oolong/internal/openai"
 	"github.com/dicedatalore/oolong/internal/ui"
 	"github.com/dicedatalore/oolong/internal/version"
@@ -89,7 +90,7 @@ Flags:
 
 	// Positional arguments (or piped stdin) mean one-shot mode: stream the
 	// answer to stdout and exit, no TUI.
-	if stdin, piped := pipedStdin(); len(args) > 0 || piped {
+	if stdin, piped := oneshot.PipedStdin(); len(args) > 0 || piped {
 		if *resume != "" {
 			fmt.Fprintln(os.Stderr, "--resume opens the TUI and cannot be combined with a one-shot prompt")
 			os.Exit(2)
@@ -97,7 +98,7 @@ Flags:
 		if cfgNotice != "" {
 			fmt.Fprintln(os.Stderr, cfgNotice)
 		}
-		os.Exit(oneShot(cfg, strings.Join(args, " "), stdin, os.Stdout))
+		os.Exit(oneshot.Run(cfg, strings.Join(args, " "), stdin, os.Stdout))
 	}
 
 	// Query the terminal background before Bubble Tea owns the tty; doing it

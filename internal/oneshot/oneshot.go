@@ -1,9 +1,8 @@
-package main
-
-// One-shot mode: `oolong "question"` (and `cat main.go | oolong "explain"`)
-// streams the answer straight to stdout with no TUI, which makes Oolong
-// scriptable. It reuses the same client, catalog, and endpoint rules as the
-// chat screen.
+// Package oneshot implements one-shot mode: `oolong "question"` (and
+// `cat main.go | oolong "explain"`) streams the answer straight to stdout
+// with no TUI, which makes Oolong scriptable. It reuses the same client,
+// catalog, and endpoint rules as the chat screen.
+package oneshot
 
 import (
 	"context"
@@ -19,11 +18,11 @@ import (
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
-// oneShot sends one user message and streams the reply to out, returning the
+// Run sends one user message and streams the reply to out, returning the
 // process exit code. prompt comes from the command-line arguments; stdin is
 // piped input ("" when the terminal is interactive) sent as context above
 // the prompt.
-func oneShot(cfg config.Config, prompt, stdin string, out io.Writer) int {
+func Run(cfg config.Config, prompt, stdin string, out io.Writer) int {
 	content := combinePrompt(prompt, stdin)
 	if content == "" {
 		fmt.Fprintln(os.Stderr, "nothing to ask: pass a prompt or pipe input")
@@ -87,9 +86,9 @@ func oneShot(cfg config.Config, prompt, stdin string, out io.Writer) int {
 	return 0
 }
 
-// pipedStdin reads piped standard input in full; piped is false when stdin
+// PipedStdin reads piped standard input in full; piped is false when stdin
 // is an interactive terminal (or unreadable), which selects the TUI.
-func pipedStdin() (stdin string, piped bool) {
+func PipedStdin() (stdin string, piped bool) {
 	st, err := os.Stdin.Stat()
 	if err != nil || st.Mode()&os.ModeCharDevice != 0 {
 		return "", false

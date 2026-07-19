@@ -1,4 +1,4 @@
-package main
+package oneshot
 
 import (
 	"fmt"
@@ -45,8 +45,8 @@ func TestOneShotStreamsToWriter(t *testing.T) {
 		Models:       []config.Model{{ID: "local-llama", BaseURL: srv.URL, ReasoningEffort: "low"}},
 	}
 	var out strings.Builder
-	if code := oneShot(cfg, "explain", "package main\n", &out); code != 0 {
-		t.Fatalf("oneShot exit code = %d, want 0", code)
+	if code := Run(cfg, "explain", "package main\n", &out); code != 0 {
+		t.Fatalf("Run() exit code = %d, want 0", code)
 	}
 	// The reply lands on the writer with a trailing newline added.
 	if got := out.String(); got != "Hello world\n" {
@@ -67,7 +67,7 @@ func TestOneShotStreamsToWriter(t *testing.T) {
 func TestOneShotNothingToAsk(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	var out strings.Builder
-	if code := oneShot(config.Config{}, "", "", &out); code != 2 {
+	if code := Run(config.Config{}, "", "", &out); code != 2 {
 		t.Errorf("exit code = %d, want 2 for an empty prompt", code)
 	}
 }
