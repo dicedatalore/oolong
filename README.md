@@ -5,7 +5,7 @@
 **Simple ephemeral chat** — a fast, keyboard-driven terminal client for OpenAI, Anthropic, and Ollama models, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 - **Ephemeral by design** — conversations live in your terminal and nowhere else. Nothing is written to disk unless you save a transcript, and OpenAI's server-side response storage is switched off. Close the window and the chat is gone.
-- **Any OpenAI-compatible endpoint** — the official API works out of the box, or point `base_url` at Ollama, LM Studio, or OpenRouter and give local models the same polished UI.
+- **Three native clients** — use OpenAI's Responses API, Anthropic's Messages API, or Ollama's local chat API from the same interface. Services that implement OpenAI's Responses API, such as LM Studio and OpenRouter, are supported too.
 - **Scriptable** — `git diff | oolong "write a commit message"` streams the answer straight to stdout, no TUI, so Oolong drops into any shell pipeline.
 
 ![oolong demo](./demo/demo.gif)
@@ -19,8 +19,8 @@
 - **Image input** — paste an image from the clipboard (`ctrl+v`) and it's attached to your next message
 - **File attachments** — `ctrl+f` picks an image or text file from disk to send with your next message
 - **One-shot mode** — `oolong "question"` (or `cat main.go | oolong "explain"`) streams the answer to stdout with no TUI, so Oolong works in scripts and pipelines
-- **OpenAI-compatible endpoints** — point `base_url` at Ollama, LM Studio, OpenRouter, or any compatible server, globally or per model
-- **Native Anthropic support** — stream Claude models through Anthropic's Messages API with text, images, files, system prompts, effort, and usage reporting
+- **Native provider support** — OpenAI, Anthropic, and Ollama clients stream text, images, files, system prompts, effort, and usage through their respective APIs
+- **Custom OpenAI endpoints** — use the OpenAI client with a custom `base_url` for services such as LM Studio and OpenRouter, globally or per model
 - **Context meter** — the chat header tracks how much of the model's context window the conversation fills, and warns as it nears the limit
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
 - **Transcript export & resume** — `ctrl+s` saves the conversation as a timestamped markdown file; `oolong --resume <file>` picks it back up later
@@ -71,53 +71,64 @@ To add, replace, or remove a provider key, press `ctrl+k` on the model picker. `
 
 ## Configuration
 
-Oolong is fully usable with no configuration. To customize it, run `oolong config init` to scaffold a commented `~/.config/oolong/config.toml` (`$XDG_CONFIG_HOME` is respected); every key is optional:
+Oolong is fully usable with no configuration. To customize it, run `oolong config init` to scaffold a commented `~/.config/oolong/config.toml` (`$XDG_CONFIG_HOME` is respected); every key is optional.
+
+The catalog below demonstrates all three clients in one configuration. Adding any `[[models]]` entries replaces the built-in catalog, so include every model you want to appear in the picker:
 
 ```toml
 default_model = "gpt-5.6-terra"   # skip the picker on launch
 transcript_dir = "~/notes/chats"  # OOLONG_TRANSCRIPT_DIR still wins
 accent = "#FFAF87"                # primary accent color
-# base_url = "https://api.openai.com/v1"
-# provider = "openai"
 
-# Replaces the built-in model catalog when present. Any model your API key
-# can access works — entries are checked against the API and unavailable
-# ones are hidden from the picker.
+# OpenAI client — uses the official Responses API when base_url is omitted.
 [[models]]
-id = "gpt-5.4"
+id = "gpt-5.6-terra"
 provider = "openai"
-description = "Previous generation"
-input_rate = 1.25    # USD per 1M tokens, both optional
-output_rate = 10.00
-reasoning_effort = "medium"  # gpt-5.6 takes none | low | medium | high | xhigh
-verbosity = "low"            # low | medium | high
-context_window = 400000      # tokens; shows a ctx meter in the chat header
+description = "Balances intelligence and cost"
+input_rate = 2.50             # USD per 1M tokens; rates are optional
+output_rate = 15.00
+reasoning_effort = "medium"   # model-dependent
+verbosity = "low"             # OpenAI only; model-dependent
+context_window = 400000       # enables the context meter
 
+# Anthropic client — uses the native Messages API.
 [[models]]
 id = "claude-sonnet-5"
 provider = "anthropic"
-description = "Anthropic Claude Sonnet"
+description = "Balanced speed, cost, and intelligence"
 input_rate = 2.00
 output_rate = 10.00
 reasoning_effort = "medium"
 context_window = 1000000
 
+# Ollama client — uses the native /api/chat endpoint and needs no API key.
 [[models]]
 id = "gemma3"
 provider = "ollama"
 description = "Local Gemma through Ollama"
 base_url = "http://localhost:11434"
+context_window = 128000
 ```
 
-For a single run, `oolong --model <id>` opens a chat directly with any model your key can access, overriding `default_model`.
+For a single run, `oolong --model <id>` opens a chat directly with a configured model, overriding `default_model`.
 
-`reasoning_effort` sets the provider's effort parameter; `verbosity` applies to OpenAI's Responses API. Values are passed through because support varies by model generation. On the model picker, `←`/`→` adjust effort for the session. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
+`provider` selects the client and may be `openai`, `anthropic`, or `ollama`. It can be set globally or per model; per-model values let one catalog mix providers. A global `base_url` is inherited by models without their own endpoint, while a per-model value overrides it.
 
-### OpenAI-compatible endpoints
+`reasoning_effort` sets the provider's effort parameter; `verbosity` applies only to OpenAI's Responses API. Values are passed through because support varies by model generation. On the model picker, `←`/`→` adjust effort for the session. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
 
-`base_url` points Oolong at a provider endpoint. Set it globally, or per model to mix endpoints in one catalog. Local OpenAI-compatible endpoints need no API key; Oolong skips OpenAI-specific validation for those routes. `OPENAI_BASE_URL` overrides configured OpenAI endpoints only.
+### Custom OpenAI endpoints
 
-Set `provider = "openai"`, `provider = "anthropic"`, or `provider = "ollama"`. Provider selection can be global or per model, so one catalog can contain all three. Both `http://localhost:11434` and its `/v1` form are accepted for Ollama.
+Use `provider = "openai"` with a custom `base_url` for a service that implements OpenAI's Responses API, such as LM Studio or OpenRouter:
+
+```toml
+[[models]]
+id = "local-model"
+provider = "openai"
+base_url = "http://localhost:1234/v1"
+description = "Model served by LM Studio"
+```
+
+Local custom endpoints need no API key, and Oolong skips OpenAI-specific key and model validation for them. `OPENAI_BASE_URL` overrides configured OpenAI endpoints only. For Ollama, prefer `provider = "ollama"`; both `http://localhost:11434` and its `/v1` form are accepted and normalized to the native API.
 
 ## Scripting
 
@@ -181,7 +192,7 @@ The mouse wheel scrolls the conversation too; hold `shift` while dragging to sel
 go test ./...
 ```
 
-The UI is a Bubble Tea state machine with three screens — model picker, chat, and first-run key entry — each in its own file under `internal/ui`. Supporting packages: `internal/openai` (streaming client), `internal/oneshot` (pipe mode), `internal/keystore` (keychain), `internal/mathfmt` (LaTeX → Unicode), and `internal/clipboard` (image paste).
+The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live in `internal/openai`, `internal/anthropic`, and `internal/ollama`; supporting packages handle one-shot mode, configuration, keychain access, math formatting, and clipboard integration.
 
 Releases are cut automatically on push to `main`: the version bump is derived from [conventional commit](https://www.conventionalcommits.org) messages — `feat:` → minor, `fix:` → patch, a breaking change → major — and commits of other types (`chore:`, `docs:`, `test:`, …) don't trigger a release.
 
