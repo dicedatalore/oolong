@@ -1,5 +1,6 @@
-# Built binary and release artifacts
+# Built binaries and release artifacts
 /oolong
+/fakeapi
 /dist/
 
 # Saved chat transcripts
