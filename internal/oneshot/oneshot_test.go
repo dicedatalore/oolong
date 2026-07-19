@@ -100,8 +100,15 @@ func TestChooseModelUsesAvailableProviderKey(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-	if got := chooseModel(config.Config{}); got != "claude-haiku-4-5" {
-		t.Errorf("chooseModel() = %q, want first Anthropic default", got)
+	var want string
+	for _, m := range config.Builtin {
+		if m.Provider == "anthropic" {
+			want = m.ID
+			break
+		}
+	}
+	if got := chooseModel(config.Config{}); got != want {
+		t.Errorf("chooseModel() = %q, want first Anthropic default %q", got, want)
 	}
 }
 
