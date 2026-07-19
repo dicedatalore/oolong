@@ -22,7 +22,9 @@ go build -o "$TMP/oolong" .
 go build -o "$TMP/fakeapi" ./e2e/fakeapi
 
 echo "== start fake API"
-REQLOG="$TMP/reqlog.txt" ANTHROPIC_REQLOG="$TMP/anthropic-reqlog.txt" +    "$TMP/fakeapi" 127.0.0.1:0 > "$TMP/fakeapi.out" &
+REQLOG="$TMP/reqlog.txt" \
+ANTHROPIC_REQLOG="$TMP/anthropic-reqlog.txt" \
+    "$TMP/fakeapi" 127.0.0.1:0 > "$TMP/fakeapi.out" &
 FAKEAPI_PID=$!
 for _ in $(seq 50); do
     ADDR=$(sed -n 's/^listening on //p' "$TMP/fakeapi.out")
@@ -96,16 +98,20 @@ tail -1 "$TMP/reqlog.txt" > "$TMP/lastreq.txt"
 assert_contains "$TMP/lastreq.txt" oneshot-request 'package main\n\nexplain'
 
 echo "== Anthropic TUI flow: picker -> Claude -> chat -> send -> quit"
-OOLONG_BIN="$TMP/oolong" python3 e2e/drive.py "$TMP/anthropic-cap.raw" "$TMP" +    "1.5:\x1b[B" "0.5:\r" "1.5:hello anthropic e2e" "1.5:\r" "3:\x1b" "1:\x1b"
+OOLONG_BIN="$TMP/oolong" python3 e2e/drive.py "$TMP/anthropic-cap.raw" "$TMP" \
+    "1.5:\x1b[B" "0.5:\r" "1.5:hello anthropic e2e" "1.5:\r" "3:\x1b" "1:\x1b"
 strip_ansi "$TMP/anthropic-cap.raw" > "$TMP/anthropic-cap.txt"
-assert_contains "$TMP/anthropic-cap.txt" anthropic-tui +    "claude-sonnet-5" "hello anthropic e2e" "fake reply done"
-assert_contains "$TMP/anthropic-reqlog.txt" anthropic-request +    '"model":"claude-sonnet-5"' "hello anthropic e2e"
+assert_contains "$TMP/anthropic-cap.txt" anthropic-tui \
+    "claude-sonnet-5" "hello anthropic e2e" "fake reply done"
+assert_contains "$TMP/anthropic-reqlog.txt" anthropic-request \
+    '"model":"claude-sonnet-5"' "hello anthropic e2e"
 
 echo "== Anthropic one-shot mode"
 "$TMP/oolong" --model claude-sonnet-5 "anthropic one shot" > "$TMP/anthropic-oneshot.out"
 assert_contains "$TMP/anthropic-oneshot.out" anthropic-oneshot "fake reply done"
 tail -1 "$TMP/anthropic-reqlog.txt" > "$TMP/anthropic-lastreq.txt"
-assert_contains "$TMP/anthropic-lastreq.txt" anthropic-oneshot-request +    '"model":"claude-sonnet-5"' "anthropic one shot"
+assert_contains "$TMP/anthropic-lastreq.txt" anthropic-oneshot-request \
+    '"model":"claude-sonnet-5"' "anthropic one shot"
 
 if [ "$FAILED" -ne 0 ]; then
     echo; echo "== captured frames (ANSI stripped) =="
