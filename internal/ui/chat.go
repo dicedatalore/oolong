@@ -6,11 +6,15 @@ package ui
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
+	"charm.land/bubbles/v2/filepicker"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -74,6 +78,8 @@ func (m *Model) resetChat() {
 	m.outputTokens = 0
 	m.costUSD = 0
 	m.pendingImages = nil
+	m.pendingFiles = nil
+	m.pickingFile = false
 	m.clearRecall()
 }
 
@@ -99,7 +105,7 @@ func (m *Model) layoutChat() {
 	// stale default would leak into the viewport size below.
 	m.input.SetWidth(contentWidth - inputRowStyle.GetHorizontalFrameSize() - 4)
 	inputHeight := m.input.Height()
-	if len(m.pendingImages) > 0 {
+	if len(m.pendingImages) > 0 || len(m.pendingFiles) > 0 {
 		inputHeight++ // attachment indicator line above the input
 	}
 	if m.editingSystem {
@@ -140,6 +146,10 @@ func (m *Model) layoutChat() {
 		m.msgCache = nil
 	}
 	m.vp.SetContent(m.conversationView())
+	if m.pickingFile {
+		// The picker overlays the viewport area, minus its title line.
+		m.filePicker.SetHeight(m.vp.Height() - 1)
+	}
 }
 
 // conversationView renders the whole transcript: user messages in bordered
@@ -177,6 +187,9 @@ func (m *Model) renderMessage(msg openai.Message) string {
 		if n := len(msg.Images); n > 0 {
 			block.WriteString("\n" + helpStyle.Render(imageLabel(n)))
 		}
+		for _, f := range msg.Files {
+			block.WriteString("\n" + helpStyle.Render("📄 "+f.Name))
+		}
 		if msg.Content != "" {
 			block.WriteString("\n" + msg.Content)
 		}
@@ -201,6 +214,11 @@ func (m *Model) renderMessage(msg openai.Message) string {
 func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if fin, ok := msg.(editorFinishedMsg); ok {
 		return m.handleEditorFinished(fin)
+	}
+	if m.pickingFile {
+		// The attach-file picker owns every message (its directory reads
+		// arrive as private messages of its own).
+		return m.updateFilePicker(msg)
 	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		if m.editingSystem {
@@ -320,6 +338,7 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if strings.TrimSpace(m.input.Value()) == "" {
 					if idx := m.prevUserMessage(len(m.messages)); idx >= 0 {
 						m.recallSavedImages = m.pendingImages
+						m.recallSavedFiles = m.pendingFiles
 						m.recallMessage(idx)
 						return m, nil
 					}
@@ -372,16 +391,30 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.layoutChat()
 				return m, nil
 			}
-		case "enter":
-			text := strings.TrimSpace(m.input.Value())
-			if m.waiting || (text == "" && len(m.pendingImages) == 0) {
+		case "ctrl+f":
+			// Attach a file from disk: the picker overlays the conversation
+			// until a file is chosen or esc cancels.
+			if m.waiting {
 				return m, nil
 			}
 			m.errText = ""
 			m.chatNotice = ""
 			m.help.ShowAll = false
-			m.messages = append(m.messages, openai.Message{Role: "user", Content: text, Images: m.pendingImages})
+			m.layoutChat()
+			m.filePicker = newFilePicker(m.vp.Height() - 1)
+			m.pickingFile = true
+			return m, m.filePicker.Init()
+		case "enter":
+			text := strings.TrimSpace(m.input.Value())
+			if m.waiting || (text == "" && len(m.pendingImages) == 0 && len(m.pendingFiles) == 0) {
+				return m, nil
+			}
+			m.errText = ""
+			m.chatNotice = ""
+			m.help.ShowAll = false
+			m.messages = append(m.messages, openai.Message{Role: "user", Content: text, Images: m.pendingImages, Files: m.pendingFiles})
 			m.pendingImages = nil
+			m.pendingFiles = nil
 			m.clearRecall()
 			m.input.SetValue("")
 			m.layoutChat()
@@ -518,6 +551,84 @@ func (m Model) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+// newFilePicker builds the attach-file picker, starting in the working
+// directory.
+func newFilePicker(height int) filepicker.Model {
+	fp := filepicker.New()
+	if dir, err := os.Getwd(); err == nil {
+		fp.CurrentDirectory = dir
+	}
+	fp.AutoHeight = false
+	fp.SetHeight(height)
+	// esc must cancel the picker (handled in updateFilePicker), not walk up
+	// a directory.
+	fp.KeyMap.Back = key.NewBinding(key.WithKeys("h", "backspace", "left"), key.WithHelp("h", "back"))
+	fp.Styles.Cursor = fp.Styles.Cursor.Foreground(peach)
+	fp.Styles.Selected = fp.Styles.Selected.Foreground(peach).Bold(true)
+	return fp
+}
+
+// updateFilePicker routes messages while the attach-file picker overlays the
+// conversation: esc cancels, choosing a file loads it as an attachment.
+func (m Model) updateFilePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "esc" {
+		m.pickingFile = false
+		m.layoutChat()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.filePicker, cmd = m.filePicker.Update(msg)
+	if ok, path := m.filePicker.DidSelectFile(msg); ok {
+		m.pickingFile = false
+		m.attachPath(path)
+		m.layoutChat()
+	}
+	return m, cmd
+}
+
+// attachPath loads a file from disk as an attachment: images join the
+// pending images, anything that reads as text becomes a pending file block.
+func (m *Model) attachPath(path string) {
+	// Past ~a megabyte a text file wouldn't fit a context window anyway,
+	// and images meet API limits long before this.
+	const maxAttachment = 20 << 20
+	if info, err := os.Stat(path); err == nil && info.Size() > maxAttachment {
+		m.chatNotice = filepath.Base(path) + " is too large to attach (20MB max)"
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		m.errText = "attach: " + err.Error()
+		return
+	}
+	name := filepath.Base(path)
+	switch mime := http.DetectContentType(data); mime {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		m.pendingImages = append(m.pendingImages, data)
+		m.chatNotice = "attached " + name
+	default:
+		if !utf8.Valid(data) {
+			m.chatNotice = name + " is neither an image nor text"
+			return
+		}
+		m.pendingFiles = append(m.pendingFiles, openai.File{Name: name, Text: string(data)})
+		m.chatNotice = "attached " + name
+	}
+}
+
+// attachmentLabel describes the pending attachments in one line; "" when
+// there are none.
+func (m Model) attachmentLabel() string {
+	var parts []string
+	if n := len(m.pendingImages); n > 0 {
+		parts = append(parts, imageLabel(n))
+	}
+	for _, f := range m.pendingFiles {
+		parts = append(parts, "📄 "+f.Name)
+	}
+	return strings.Join(parts, " • ")
+}
+
 // recallActive reports whether the composer holds an unedited recalled
 // message. Any edit makes the value differ from recallText, which drops the
 // composer out of history stepping without needing an explicit reset.
@@ -526,13 +637,14 @@ func (m Model) recallActive() bool {
 }
 
 // recallMessage loads the sent message at idx into the composer, including
-// its image attachments.
+// its attachments.
 func (m *Model) recallMessage(idx int) {
 	msg := m.messages[idx]
 	m.recallIdx = idx
 	m.recallText = msg.Content
 	m.input.SetValue(msg.Content)
 	m.pendingImages = slices.Clone(msg.Images)
+	m.pendingFiles = slices.Clone(msg.Files)
 	m.layoutChat()
 	m.vp.GotoBottom()
 }
@@ -542,6 +654,7 @@ func (m *Model) recallMessage(idx int) {
 func (m *Model) exitRecall() {
 	m.input.SetValue("")
 	m.pendingImages = m.recallSavedImages
+	m.pendingFiles = m.recallSavedFiles
 	m.clearRecall()
 	m.layoutChat()
 	m.vp.GotoBottom()
@@ -551,6 +664,7 @@ func (m *Model) clearRecall() {
 	m.recallIdx = -1
 	m.recallText = ""
 	m.recallSavedImages = nil
+	m.recallSavedFiles = nil
 }
 
 // prevUserMessage returns the index of the last user message before i, -1
@@ -622,13 +736,25 @@ func (m Model) viewChat() string {
 	if m.systemPrompt != "" {
 		cost += " • system prompt"
 	}
-	header := headerBarStyle.Render(headerStyle.Render(m.chosen) + helpStyle.Render("  "+cost))
+	// The context meter turns into a warning as the window fills up.
+	var ctxWarn string
+	if pct, ok := m.contextUsed(); ok {
+		if pct >= 80 {
+			ctxWarn = errorStyle.Render(fmt.Sprintf(" • ctx %d%% full", pct))
+		} else {
+			cost += fmt.Sprintf(" • ctx %d%%", pct)
+		}
+	}
+	header := headerBarStyle.Render(headerStyle.Render(m.chosen) + helpStyle.Render("  "+cost) + ctxWarn)
 
 	// The bottom bar shows one thing at a time, in order of urgency:
-	// error > spinner > notice > system prompt hints > key help.
+	// error > spinner > notice > picker/system prompt hints > key help.
 	bottomBar := m.help.View(m.keys)
 	if m.editingSystem {
 		bottomBar = helpStyle.Render("enter save • esc cancel • empty prompt clears")
+	}
+	if m.pickingFile {
+		bottomBar = helpStyle.Render("enter attach • ←/→ folders • esc cancel")
 	}
 	if m.chatNotice != "" {
 		bottomBar = helpStyle.Render(m.chatNotice)
@@ -650,10 +776,17 @@ func (m Model) viewChat() string {
 		inputArea = inputRowStyle.Render(botLabelStyle.Render("System prompt")) +
 			"\n" + inputArea
 	}
-	if n := len(m.pendingImages); n > 0 {
-		inputArea = inputRowStyle.Render(helpStyle.Render(imageLabel(n)+" — sent with next message")) +
+	if label := m.attachmentLabel(); label != "" {
+		inputArea = inputRowStyle.Render(helpStyle.Render(label+" — sent with next message")) +
 			"\n" + inputArea
 	}
-	return pageStyle.Render(header + "\n" + m.vp.View() + "\n" +
+
+	// The attach-file picker overlays the conversation area.
+	body := m.vp.View()
+	if m.pickingFile {
+		body = lipgloss.NewStyle().Height(m.vp.Height()).MaxHeight(m.vp.Height()).Render(
+			inputRowStyle.Render(botLabelStyle.Render("Attach a file")) + "\n" + m.filePicker.View())
+	}
+	return pageStyle.Render(header + "\n" + body + "\n" +
 		inputArea + "\n" + bottomBar)
 }

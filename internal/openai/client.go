@@ -25,15 +25,33 @@ func New(apiKey string, opts ...option.RequestOption) *Client {
 	// No request timeout: it would bound the whole request including the
 	// streamed body, cutting off long responses mid-stream. The user can
 	// always stop a stuck stream, which cancels the request context.
-	opts = append([]option.RequestOption{option.WithAPIKey(apiKey)}, opts...)
+	// An empty apiKey sends no Authorization header, which keyless
+	// OpenAI-compatible endpoints (Ollama, LM Studio) are fine with.
+	if apiKey != "" {
+		opts = append([]option.RequestOption{option.WithAPIKey(apiKey)}, opts...)
+	}
 	return &Client{api: sdk.NewClient(opts...)}
+}
+
+// WithBaseURL points the client at an OpenAI-compatible endpoint, so callers
+// don't need to import the SDK's option package.
+func WithBaseURL(url string) option.RequestOption {
+	return option.WithBaseURL(url)
 }
 
 type Message struct {
 	Role    string
 	Content string
 	Model   string   // assistant messages: the model that produced the reply
-	Images  [][]byte // PNG-encoded attachments, user messages only
+	Images  [][]byte // image attachments (PNG/JPEG/GIF/WebP), user messages only
+	Files   []File   // text-file attachments, user messages only
+}
+
+// File is a text file attached to a user message; it is sent to the model
+// as its own content block alongside the message text.
+type File struct {
+	Name string
+	Text string
 }
 
 type Usage struct {
@@ -75,17 +93,20 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []Messag
 	input := make(responses.ResponseInputParam, 0, len(messages))
 	for _, m := range messages {
 		role := responses.EasyInputMessageRole(m.Role)
-		if len(m.Images) == 0 {
+		if len(m.Images) == 0 && len(m.Files) == 0 {
 			input = append(input, responses.ResponseInputItemParamOfMessage(m.Content, role))
 			continue
 		}
-		content := make(responses.ResponseInputMessageContentListParam, 0, len(m.Images)+1)
+		content := make(responses.ResponseInputMessageContentListParam, 0, len(m.Images)+len(m.Files)+1)
 		if m.Content != "" {
 			content = append(content, responses.ResponseInputContentParamOfInputText(m.Content))
 		}
+		for _, f := range m.Files {
+			content = append(content, responses.ResponseInputContentParamOfInputText(fileBlock(f)))
+		}
 		for _, img := range m.Images {
 			item := responses.ResponseInputContentParamOfInputImage(responses.ResponseInputImageDetailAuto)
-			item.OfInputImage.ImageURL = param.NewOpt("data:image/png;base64," + base64.StdEncoding.EncodeToString(img))
+			item.OfInputImage.ImageURL = param.NewOpt("data:" + imageMIME(img) + ";base64," + base64.StdEncoding.EncodeToString(img))
 			content = append(content, item)
 		}
 		input = append(input, responses.ResponseInputItemParamOfMessage(content, role))
@@ -142,6 +163,26 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []Messag
 		return
 	}
 	emit(StreamEvent{Done: true, Usage: usage})
+}
+
+// fileBlock renders a text attachment as its own content block: a name line
+// and a fenced body, the fence grown past any backtick run in the content.
+func fileBlock(f File) string {
+	fence := "```"
+	for strings.Contains(f.Text, fence) {
+		fence += "`"
+	}
+	return "File: " + f.Name + "\n" + fence + "\n" + strings.TrimRight(f.Text, "\n") + "\n" + fence
+}
+
+// imageMIME sniffs an image attachment's media type for its data: URL.
+// Unrecognized bytes fall back to PNG, which clipboard attachments always
+// are; disk attachments are sniffed before they get here.
+func imageMIME(data []byte) string {
+	if mime := http.DetectContentType(data); strings.HasPrefix(mime, "image/") {
+		return mime
+	}
+	return "image/png"
 }
 
 // ListModels returns the ids of the models available to the API key, for

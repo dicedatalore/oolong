@@ -4,7 +4,9 @@
 
 **Simple ephemeral chat** — a fast, keyboard-driven terminal client for OpenAI models, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
-Conversations live in your terminal and nowhere else. Nothing is written to disk unless you explicitly save a transcript, and Oolong opts out of OpenAI's server-side response storage. Close the window and the chat is gone.
+- **Ephemeral by design** — conversations live in your terminal and nowhere else. Nothing is written to disk unless you save a transcript, and OpenAI's server-side response storage is switched off. Close the window and the chat is gone.
+- **Any OpenAI-compatible endpoint** — the official API works out of the box, or point `base_url` at Ollama, LM Studio, or OpenRouter and give local models the same polished UI.
+- **Scriptable** — `git diff | oolong "write a commit message"` streams the answer straight to stdout, no TUI, so Oolong drops into any shell pipeline.
 
 ![oolong demo](./demo/demo.gif)
 
@@ -15,9 +17,13 @@ Conversations live in your terminal and nowhere else. Nothing is written to disk
 - **Model picker** with per-model pricing, plus a live token count and cost estimate in the chat header
 - **Mid-chat model switch** — `esc` back to the picker keeps the conversation, so you can escalate to a bigger model halfway through
 - **Image input** — paste an image from the clipboard (`ctrl+v`) and it's attached to your next message
+- **File attachments** — `ctrl+f` picks an image or text file from disk to send with your next message
+- **One-shot mode** — `oolong "question"` (or `cat main.go | oolong "explain"`) streams the answer to stdout with no TUI, so Oolong works in scripts and pipelines
+- **OpenAI-compatible endpoints** — point `base_url` at Ollama, LM Studio, OpenRouter, or any compatible server, globally or per model
+- **Context meter** — the chat header tracks how much of the model's context window the conversation fills, and warns as it nears the limit
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
-- **Transcript export** — `ctrl+s` saves the conversation as a timestamped markdown file, to the current directory or a directory you configure
-- **Configurable** — an optional TOML config file sets a custom model catalog, a default model, reasoning effort and verbosity, transcript directory, and accent color
+- **Transcript export & resume** — `ctrl+s` saves the conversation as a timestamped markdown file; `oolong --resume <file>` picks it back up later
+- **Configurable** — an optional TOML config file sets a custom model catalog, a default model, reasoning effort and verbosity, endpoints, transcript directory, and accent color
 - **Keychain storage** — your API key lives in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service), not in a dotfile
 - **Readable math** — LaTeX in responses is converted to plain Unicode instead of showing up as mangled backslashes
 
@@ -70,6 +76,7 @@ Oolong is fully usable with no configuration. To customize it, run `oolong confi
 default_model = "gpt-5.6-terra"   # skip the picker on launch
 transcript_dir = "~/notes/chats"  # OOLONG_TRANSCRIPT_DIR still wins
 accent = "#FFAF87"                # primary accent color
+# base_url = "http://localhost:11434/v1"  # any OpenAI-compatible endpoint
 
 # Replaces the built-in model catalog when present. Any model your API key
 # can access works — entries are checked against the API and unavailable
@@ -81,11 +88,39 @@ input_rate = 1.25    # USD per 1M tokens, both optional
 output_rate = 10.00
 reasoning_effort = "medium"  # gpt-5.6 takes none | low | medium | high | xhigh
 verbosity = "low"            # low | medium | high
+context_window = 400000      # tokens; shows a ctx meter in the chat header
+# base_url = ""              # per-model endpoint, overrides the global one
 ```
 
 For a single run, `oolong --model <id>` opens a chat directly with any model your key can access, overriding `default_model`.
 
 `reasoning_effort` and `verbosity` set the model's default [Responses API](https://platform.openai.com/docs/api-reference/responses) parameters. They're passed through as-is — the supported values vary by model generation, and the API reports clearly if a model rejects one. On the model picker, `←`/`→` adjust the selected model's effort for the session, shown in the list item and later in the chat header. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
+
+### OpenAI-compatible endpoints
+
+`base_url` points Oolong at any server that speaks the OpenAI API — Ollama, LM Studio, OpenRouter, and friends. Set it globally, or per model to mix endpoints in one catalog. Local endpoints need no API key; on custom endpoints Oolong skips the OpenAI-specific key validation and model availability check. The `OPENAI_BASE_URL` environment variable overrides every configured endpoint.
+
+## Scripting
+
+Positional arguments (or piped input) skip the TUI entirely and stream the answer to stdout:
+
+```sh
+oolong "why is the sky blue"
+cat main.go | oolong "explain this file"
+git diff | oolong "write a commit message"
+```
+
+One-shot mode uses `--model` / `default_model` (falling back to the catalog's first entry) and the same key, endpoint, and reasoning settings as the TUI.
+
+## Resuming a chat
+
+Transcripts saved with `ctrl+s` can be picked back up later:
+
+```sh
+oolong --resume oolong-chat-2026-07-19-094035.md
+```
+
+The conversation, system prompt, and model are restored from the file (image and file attachments are recorded only as labels, so they don't ride along). Nothing is ever loaded implicitly — resume only reads a file you name.
 
 ## Keybindings
 
@@ -94,6 +129,7 @@ For a single run, `oolong --model <id>` opens a chat directly with any model you
 | `enter` | Send message |
 | `shift+enter` / `ctrl+j` | Insert newline |
 | `ctrl+v` | Paste (a clipboard image becomes an attachment) |
+| `ctrl+f` | Attach an image or text file from disk |
 | `ctrl+e` | Compose the message in `$EDITOR` |
 | `ctrl+y` | Copy the last reply to the clipboard |
 | `ctrl+b` | Copy the last reply's last code block |

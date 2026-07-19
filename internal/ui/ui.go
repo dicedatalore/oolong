@@ -28,6 +28,7 @@ package ui
 import (
 	"context"
 
+	"charm.land/bubbles/v2/filepicker"
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
@@ -39,6 +40,7 @@ import (
 	"github.com/charmbracelet/glamour"
 
 	"github.com/dicedatalore/oolong/internal/config"
+	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
@@ -66,6 +68,11 @@ type Model struct {
 	pendingCatalog []config.Model // custom catalog awaiting the availability check
 	pendingModel   string         // default_model to open once the first resize arrives
 	transcriptDir  string         // transcript_dir from config; the env var wins
+	baseURL        string         // global base_url from config; blank when the env var overrides
+
+	// clients for models with their own base_url, keyed by endpoint and
+	// built on first use; m.client serves the global endpoint.
+	clients map[string]*openai.Client
 
 	// model picker
 	picker list.Model
@@ -89,14 +96,20 @@ type Model struct {
 	// in-flight response stream (see stream.go)
 	stream        <-chan openai.StreamEvent
 	cancelStream  context.CancelFunc
-	streaming     bool     // an in-progress assistant message is the last element of messages
-	pendingImages [][]byte // pasted images sent with the next message
+	streaming     bool          // an in-progress assistant message is the last element of messages
+	pendingImages [][]byte      // pasted/attached images sent with the next message
+	pendingFiles  []openai.File // text files attached from disk, sent with the next message
+
+	// attach-file picker (ctrl+f overlays the conversation)
+	filePicker  filepicker.Model
+	pickingFile bool
 
 	// ↑/↓ history recall: the composer steps through previously sent
 	// messages while it holds an unedited recall (see recallActive).
-	recallIdx         int      // index into messages of the recalled message; -1 when none
-	recallText        string   // the text recallIdx was recalled as, to detect edits
-	recallSavedImages [][]byte // pendingImages stashed when recall started
+	recallIdx         int           // index into messages of the recalled message; -1 when none
+	recallText        string        // the text recallIdx was recalled as, to detect edits
+	recallSavedImages [][]byte      // pendingImages stashed when recall started
+	recallSavedFiles  []openai.File // pendingFiles stashed when recall started
 
 	// system prompt editing (ctrl+p repurposes the chat input)
 	systemPrompt  string
@@ -148,15 +161,18 @@ func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string
 		client:        client,
 		logo:          renderLogoHeader(),
 		transcriptDir: cfg.TranscriptDir,
+		baseURL:       cfg.BaseURL,
 		recallIdx:     -1,
 	}
 	m.initCmd = sparkleTick(0)
-	if cfg.CustomCatalog() {
+	if cfg.CustomCatalog() && !config.CustomEndpoint(cfg.BaseURL) {
 		// Config-supplied models show in the picker only once the API
 		// confirms they exist; the check starts now, or from handleKeyCheck
 		// when key entry has to supply the client first. The catalog itself
 		// is active immediately — default_model may open a chat that needs
 		// its rates and reasoning defaults before the check lands.
+		// Custom endpoints skip the check: their model names are not
+		// OpenAI's to vouch for.
 		m.pendingCatalog = cfg.Catalog()
 		m.catalog = m.pendingCatalog
 		m.rates = ratesFrom(m.pendingCatalog)
@@ -183,6 +199,34 @@ func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string
 		m.initCmd = m.keyInput.Focus()
 	}
 	return m
+}
+
+// newClient builds a client for the global endpoint with the given key,
+// honoring a config base_url. Used when key entry replaces the client.
+func (m Model) newClient(key string) *openai.Client {
+	if m.baseURL != "" {
+		return openai.New(key, openai.WithBaseURL(m.baseURL))
+	}
+	return openai.New(key)
+}
+
+// clientFor returns the client to talk to a model with: the default client,
+// unless the model's catalog entry names its own base_url, in which case a
+// client for that endpoint is built (once) with the same key.
+func (m *Model) clientFor(id string) *openai.Client {
+	url := m.modelConfig(id).BaseURL
+	if url == "" || url == m.baseURL {
+		return m.client
+	}
+	if c, ok := m.clients[url]; ok {
+		return c
+	}
+	if m.clients == nil {
+		m.clients = make(map[string]*openai.Client)
+	}
+	c := openai.New(keystore.Resolve(), openai.WithBaseURL(url))
+	m.clients[url] = c
+	return c
 }
 
 func newSpinner() spinner.Model {

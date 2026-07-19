@@ -10,6 +10,7 @@ type chatKeyMap struct {
 	Send      key.Binding
 	NewLine   key.Binding
 	Paste     key.Binding
+	Attach    key.Binding
 	Editor    key.Binding
 	Copy      key.Binding
 	CopyCode  key.Binding
@@ -38,11 +39,11 @@ func (k chatKeyMap) ShortHelp() []key.Binding {
 func (k chatKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Send, k.NewLine, k.Paste},
-		{k.Editor, k.Copy, k.CopyCode},
-		{k.Regen, k.Recall, k.SysPrompt},
-		{k.Save, k.NewChat, k.Scroll},
-		{k.Jump, k.Stop, k.Back},
-		{k.Quit, k.Help},
+		{k.Attach, k.Editor, k.Copy},
+		{k.CopyCode, k.Regen, k.Recall},
+		{k.SysPrompt, k.Save, k.NewChat},
+		{k.Scroll, k.Jump, k.Stop},
+		{k.Back, k.Quit, k.Help},
 	}
 }
 
@@ -51,6 +52,7 @@ func newChatKeyMap() chatKeyMap {
 		Send:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
 		NewLine:   key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"), key.WithHelp("shift+enter", "new line")),
 		Paste:     key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("ctrl+v", "paste")),
+		Attach:    key.NewBinding(key.WithKeys("ctrl+f"), key.WithHelp("ctrl+f", "attach file")),
 		Editor:    key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "compose in $EDITOR")),
 		Copy:      key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("ctrl+y", "copy last reply")),
 		CopyCode:  key.NewBinding(key.WithKeys("ctrl+b"), key.WithHelp("ctrl+b", "copy code block")),

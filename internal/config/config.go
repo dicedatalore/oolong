@@ -7,6 +7,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,12 +28,15 @@ type Model struct {
 	OutputRate      float64 `toml:"output_rate"`
 	ReasoningEffort string  `toml:"reasoning_effort"`
 	Verbosity       string  `toml:"verbosity"`
+	BaseURL         string  `toml:"base_url"`       // per-model OpenAI-compatible endpoint
+	ContextWindow   int     `toml:"context_window"` // tokens; enables the ctx meter in the chat header
 }
 
 type Config struct {
 	DefaultModel  string  `toml:"default_model"`  // skip the picker on launch when set
 	TranscriptDir string  `toml:"transcript_dir"` // OOLONG_TRANSCRIPT_DIR env var still wins
 	Accent        string  `toml:"accent"`         // primary accent color, "#RRGGBB"
+	BaseURL       string  `toml:"base_url"`       // OpenAI-compatible endpoint for every model
 	Models        []Model `toml:"models"`         // replaces the built-in catalog when present
 }
 
@@ -40,9 +44,20 @@ type Config struct {
 // file does not provide its own [[models]] catalog.
 // Rates per https://openai.com/api/pricing.
 var Builtin = []Model{
-	{ID: "gpt-5.6-luna", Description: "For cost-sensitive workloads", InputRate: 1.00, OutputRate: 6.00},
-	{ID: "gpt-5.6-terra", Description: "Balances intelligence and cost", InputRate: 2.50, OutputRate: 15.00},
-	{ID: "gpt-5.6-sol", Description: "For complex professional work", InputRate: 5.00, OutputRate: 30.00},
+	{ID: "gpt-5.6-luna", Description: "For cost-sensitive workloads", InputRate: 1.00, OutputRate: 6.00, ContextWindow: 400_000},
+	{ID: "gpt-5.6-terra", Description: "Balances intelligence and cost", InputRate: 2.50, OutputRate: 15.00, ContextWindow: 400_000},
+	{ID: "gpt-5.6-sol", Description: "For complex professional work", InputRate: 5.00, OutputRate: 30.00, ContextWindow: 400_000},
+}
+
+// OfficialBaseURL is the endpoint the OpenAI SDK talks to by default.
+const OfficialBaseURL = "https://api.openai.com/v1"
+
+// CustomEndpoint reports whether url points somewhere other than the
+// official OpenAI API. Key validation and the model availability check are
+// OpenAI-specific and are skipped on custom endpoints (Ollama, LM Studio,
+// OpenRouter, …).
+func CustomEndpoint(url string) bool {
+	return url != "" && strings.TrimSuffix(url, "/") != OfficialBaseURL
 }
 
 // Catalog returns the models the picker offers: the config's catalog when
@@ -106,6 +121,11 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 # Primary accent color.
 # accent = "#FFAF87"
 
+# Any OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter, …). Applies
+# to every model unless one sets its own base_url below. The OPENAI_BASE_URL
+# env var overrides both. No API key is required for local endpoints.
+# base_url = "http://localhost:11434/v1"
+
 # Replaces the built-in model catalog when present. Any model your API key
 # can access works; unavailable models are hidden from the picker.
 # [[models]]
@@ -115,6 +135,8 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 # output_rate = 15.00          # USD per 1M output tokens
 # reasoning_effort = "medium"  # none | low | medium | high | xhigh (model-dependent)
 # verbosity = "low"            # low | medium | high
+# context_window = 400000      # tokens; shows a ctx meter in the chat header
+# base_url = ""                # per-model endpoint, overrides the global one
 `
 
 // Init writes the scaffold config file and returns its path. An existing
@@ -134,6 +156,12 @@ func Init() (string, error) {
 }
 
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// validEndpoint reports whether s parses as an absolute http(s) URL.
+func validEndpoint(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
 
 // parse decodes and validates one config document. Split from Load so tests
 // can exercise it without touching the filesystem.
@@ -157,6 +185,10 @@ func parse(data string) (Config, error) {
 		drop("accent %q is not a #RRGGBB color", c.Accent)
 		c.Accent = ""
 	}
+	if c.BaseURL != "" && !validEndpoint(c.BaseURL) {
+		drop("base_url %q is not an http(s) URL", c.BaseURL)
+		c.BaseURL = ""
+	}
 	models := c.Models[:0]
 	for _, m := range c.Models {
 		switch {
@@ -166,6 +198,13 @@ func parse(data string) (Config, error) {
 		case m.InputRate < 0 || m.OutputRate < 0:
 			drop("model %s has a negative rate", m.ID)
 			continue
+		case m.ContextWindow < 0:
+			drop("model %s has a negative context_window", m.ID)
+			continue
+		}
+		if m.BaseURL != "" && !validEndpoint(m.BaseURL) {
+			drop("model %s base_url %q is not an http(s) URL", m.ID, m.BaseURL)
+			m.BaseURL = ""
 		}
 		models = append(models, m)
 	}

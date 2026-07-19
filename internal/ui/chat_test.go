@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -544,6 +545,116 @@ func TestConversationWidthCapped(t *testing.T) {
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	if got := model.(Model).cacheWidth; got != maxMsgWidth {
 		t.Errorf("cacheWidth after in-cap resize = %d, want %d", got, maxMsgWidth)
+	}
+}
+
+func TestAttachFilePickerToggle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model, cmd := model.Update(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
+	am := model.(Model)
+	if !am.pickingFile {
+		t.Fatal("ctrl+f did not open the file picker")
+	}
+	if cmd == nil {
+		t.Fatal("ctrl+f returned no init command for the picker")
+	}
+	if v := am.viewChat(); !strings.Contains(v, "Attach a file") {
+		t.Error("view missing the picker title")
+	}
+	if h := lipgloss.Height(am.viewChat()); h != 24 {
+		t.Errorf("picker view height = %d, want 24", h)
+	}
+
+	// esc cancels without touching the chat, and doesn't leave for the
+	// model picker.
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	am = model.(Model)
+	if am.pickingFile || am.state != stateChat {
+		t.Errorf("esc: pickingFile=%v state=%v, want closed picker in chat", am.pickingFile, am.state)
+	}
+}
+
+func TestAttachPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	dir := t.TempDir()
+	write := func(name string, data []byte) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	textPath := write("main.go", []byte("package main\n"))
+	pngPath := write("shot.png", []byte("\x89PNG\r\n\x1a\n00000000"))
+	binPath := write("blob.bin", []byte{0x00, 0xFF, 0xFE, 0x00, 0x80, 0x81})
+
+	am := enterChat(t, srv).(Model)
+	am.attachPath(textPath)
+	if len(am.pendingFiles) != 1 || am.pendingFiles[0].Name != "main.go" ||
+		am.pendingFiles[0].Text != "package main\n" {
+		t.Errorf("pendingFiles = %+v, want main.go with its content", am.pendingFiles)
+	}
+	am.attachPath(pngPath)
+	if len(am.pendingImages) != 1 {
+		t.Errorf("pendingImages = %d entries, want 1", len(am.pendingImages))
+	}
+	am.attachPath(binPath)
+	if len(am.pendingFiles) != 1 || len(am.pendingImages) != 1 {
+		t.Error("binary file was attached")
+	}
+	if !strings.Contains(am.chatNotice, "neither an image nor text") {
+		t.Errorf("chatNotice = %q, want a not-attachable notice", am.chatNotice)
+	}
+
+	// Both attachments ride along on the next send, and the indicator line
+	// names them.
+	if label := am.attachmentLabel(); !strings.Contains(label, "1 image") || !strings.Contains(label, "main.go") {
+		t.Errorf("attachmentLabel = %q, want image count and file name", label)
+	}
+	var model tea.Model = am
+	model = typeText(model, "look")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	am = model.(Model)
+	sent := am.messages[len(am.messages)-1]
+	if len(sent.Files) != 1 || len(sent.Images) != 1 {
+		t.Errorf("sent message has %d files / %d images, want 1 / 1", len(sent.Files), len(sent.Images))
+	}
+	if am.pendingFiles != nil || am.pendingImages != nil {
+		t.Error("pending attachments not cleared after send")
+	}
+	am.finishStream() // cancel the in-flight stream so its goroutine exits
+}
+
+func TestContextMeterInHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	// The built-in catalog knows the window size (400k tokens).
+	model := enterChat(t, srv)
+	am := model.(Model)
+	if v := am.viewChat(); !strings.Contains(v, "ctx 0%") {
+		t.Error("header missing the context meter for a built-in model")
+	}
+
+	// 1.28M chars ≈ 320k tokens = 80% of the window: the meter becomes a
+	// warning.
+	am.messages = []openai.Message{{Role: "user", Content: strings.Repeat("a", 1_280_000)}}
+	if v := am.viewChat(); !strings.Contains(v, "ctx 80% full") {
+		t.Error("header missing the near-full warning at 80%")
+	}
+
+	// A model with no known window shows no meter.
+	cfg := config.Config{
+		DefaultModel: "mystery",
+		Models:       []config.Model{{ID: "mystery"}},
+	}
+	model = newCustomModel(t, srv, cfg)
+	if v := model.(Model).viewChat(); strings.Contains(v, "ctx ") {
+		t.Error("header shows a context meter without a window size")
 	}
 }
 

@@ -107,6 +107,49 @@ func TestStreamChatSendsImages(t *testing.T) {
 	}
 }
 
+func TestStreamChatSendsFilesAndSniffsImageMIME(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		sseEvent(w, "response.completed",
+			`{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	}))
+	defer srv.Close()
+
+	jpeg := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0}
+	msgs := []Message{{
+		Role:    "user",
+		Content: "review this",
+		Files:   []File{{Name: "main.go", Text: "package main\n"}},
+		Images:  [][]byte{jpeg},
+	}}
+	ch := make(chan StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", msgs, Options{}, ch)
+	for ev := range ch {
+		if ev.Err != nil {
+			t.Fatalf("unexpected error: %v", ev.Err)
+		}
+	}
+
+	for _, want := range []string{
+		`"text":"review this"`,
+		`"text":"File: main.go\n` + "```" + `\npackage main\n` + "```" + `"`,
+		`"image_url":"data:image/jpeg;base64,`,
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("request body missing %s:\n%s", want, body)
+		}
+	}
+}
+
+func TestFileBlockGrowsFencePastContent(t *testing.T) {
+	got := fileBlock(File{Name: "notes.md", Text: "```go\ncode\n```\n"})
+	if !strings.Contains(got, "````\n```go\ncode\n```\n````") {
+		t.Errorf("fence not grown past the content's own fence:\n%s", got)
+	}
+}
+
 func TestStreamChatSendsOptions(t *testing.T) {
 	var body []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

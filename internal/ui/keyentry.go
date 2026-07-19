@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
@@ -43,6 +44,12 @@ func (m Model) updateKeyEntry(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "enter":
 			k := strings.TrimSpace(m.keyInput.Value())
+			if config.CustomEndpoint(m.baseURL) {
+				// OpenAI's key check doesn't apply to custom endpoints, and
+				// local ones (Ollama, LM Studio) need no key at all — accept
+				// whatever was entered, including nothing.
+				return m, func() tea.Msg { return keyCheckMsg{key: k} }
+			}
 			if k == "" {
 				m.keyErr = "API key cannot be empty"
 				return m, nil
@@ -72,8 +79,11 @@ func (m Model) handleKeyCheck(msg keyCheckMsg) (tea.Model, tea.Cmd) {
 		m.keyErr = msg.err.Error()
 		return m, nil
 	}
-	m.client = openai.New(msg.key)
-	if err := keystore.Set(msg.key); err != nil {
+	m.client = m.newClient(msg.key)
+	if msg.key == "" {
+		// Only possible on a custom endpoint, where keyless is fine.
+		m.keyNotice = "continuing without an API key"
+	} else if err := keystore.Set(msg.key); err != nil {
 		m.keyNotice = "couldn't save to keychain; key active for this session only"
 	} else {
 		m.keyNotice = "key saved to OS keychain"

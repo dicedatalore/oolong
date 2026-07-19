@@ -114,6 +114,82 @@ func TestAvailabilityCheckErrorShowsWholeCatalog(t *testing.T) {
 	}
 }
 
+func TestCustomEndpointSkipsAvailabilityCheck(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	cfg := config.Config{BaseURL: "http://localhost:11434/v1", Models: customCatalog()}
+	model := newCustomModel(t, srv, cfg)
+	am := model.(Model)
+	if am.pendingCatalog != nil {
+		t.Error("custom endpoint left the catalog waiting on the availability check")
+	}
+	if n := len(am.picker.Items()); n != 2 {
+		t.Errorf("picker shows %d items, want the full catalog immediately", n)
+	}
+	if strings.Contains(am.keyNotice, "checking") {
+		t.Errorf("keyNotice = %q, want no checking notice", am.keyNotice)
+	}
+}
+
+func TestAvailabilityCheckKeepsModelsWithOwnEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	catalog := customCatalog()
+	catalog[0].BaseURL = "http://localhost:11434/v1"
+	model := newCustomModel(t, srv, config.Config{Models: catalog})
+	// Neither model is in the OpenAI list, but the first lives elsewhere.
+	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{}})
+	am := model.(Model)
+	if n := len(am.picker.Items()); n != 1 {
+		t.Fatalf("picker shows %d items, want 1", n)
+	}
+	if am.picker.Items()[0].(modelItem).id != "gpt-5.4" {
+		t.Error("the model with its own endpoint did not survive the check")
+	}
+	if !strings.Contains(am.keyNotice, "gpt-5.6-terra") {
+		t.Errorf("keyNotice = %q, want it to name the hidden model", am.keyNotice)
+	}
+}
+
+func TestStreamUsesPerModelEndpoint(t *testing.T) {
+	// Resolve must find the env key so no test ever touches the OS keychain.
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	var globalResponses int
+	global := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/responses") {
+			globalResponses++
+		}
+	}))
+	defer global.Close()
+	var localResponses int
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/responses") {
+			localResponses++
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
+	}))
+	defer local.Close()
+
+	cfg := config.Config{
+		DefaultModel: "local-llama",
+		Models:       []config.Model{{ID: "local-llama", BaseURL: local.URL}},
+	}
+	model := newCustomModel(t, global, cfg)
+	if model.(Model).state != stateChat {
+		t.Fatal("default_model did not open the chat")
+	}
+	model = typeText(model, "hi")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	pumpStream(t, model)
+	if localResponses != 1 || globalResponses != 0 {
+		t.Errorf("responses hit local %d / global %d times, want 1 / 0",
+			localResponses, globalResponses)
+	}
+}
+
 func TestDefaultModelSkipsPicker(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()

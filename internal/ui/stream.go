@@ -35,11 +35,7 @@ func (m *Model) startStream() tea.Cmd {
 		history = append(history, openai.Message{Role: "system", Content: m.systemPrompt})
 	}
 	history = append(history, m.messages...)
-	chars := 0
-	for _, msg := range history {
-		chars += len(msg.Content)
-	}
-	m.estInputTokens = estimateTokens(chars)
+	m.estInputTokens = estimateTokens(m.transcriptChars())
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan openai.StreamEvent)
 	m.stream = ch
@@ -50,7 +46,7 @@ func (m *Model) startStream() tea.Cmd {
 		ReasoningEffort: cm.ReasoningEffort,
 		Verbosity:       cm.Verbosity,
 	}
-	go m.client.StreamChat(ctx, m.chosen, history, opts, ch)
+	go m.clientFor(m.chosen).StreamChat(ctx, m.chosen, history, opts, ch)
 	return readStream(ch)
 }
 
@@ -73,6 +69,31 @@ func readStream(ch <-chan openai.StreamEvent) tea.Cmd {
 // completes.
 func estimateTokens(chars int) int {
 	return chars / 4
+}
+
+// transcriptChars counts the characters a request for the current
+// conversation sends: the system prompt plus every message, including
+// attached file contents.
+func (m Model) transcriptChars() int {
+	chars := len(m.systemPrompt)
+	for _, msg := range m.messages {
+		chars += len(msg.Content)
+		for _, f := range msg.Files {
+			chars += len(f.Text)
+		}
+	}
+	return chars
+}
+
+// contextUsed estimates how much of the model's context window the
+// conversation fills, in percent. ok is false when the catalog doesn't know
+// the model's window size.
+func (m Model) contextUsed() (pct int, ok bool) {
+	window := m.modelConfig(m.chosen).ContextWindow
+	if window <= 0 {
+		return 0, false
+	}
+	return 100 * estimateTokens(m.transcriptChars()) / window, true
 }
 
 // streamEstimate returns the estimated usage of the in-flight request:

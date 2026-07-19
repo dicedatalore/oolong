@@ -4,7 +4,7 @@ What's planned, roughly ordered. Releases are cut automatically from
 conventional commits on main, so items ship whenever they're ready —
 Now/Next/Later is priority, not versions.
 
-## Now — quick wins
+## Now — quick wins [DONE]
 
 - **`--model` flag** to open a chat directly, complementing config
   `default_model` (the `pendingModel` path in `ui.New` already does the work).
@@ -24,7 +24,7 @@ Now/Next/Later is priority, not versions.
   paragraphs are hard to read; wrap at ~100 cols and keep the blocks
   left-aligned.
 
-## Next — features
+## Next — features [DONE]
 
 - **OpenAI-compatible `base_url`** (global and per-model config) — Ollama,
   LM Studio, OpenRouter work with the existing client (`openai.New` already
@@ -38,19 +38,13 @@ Now/Next/Later is priority, not versions.
   config key), show % used in the chat header (`estimateTokens` exists),
   warn as the limit nears.
 - **Resume a saved transcript**: `oolong --resume oolong-chat-….md`
-  reconstructs the conversation (explicit user action only). Decision at
-  implementation time: parse the markdown back, or have ctrl+s also write a
-  structured sidecar.
-- **Prompt presets**: named system prompts in config (`[[prompts]]`), picked
-  from the ctrl+p flow.
+  reconstructs the conversation (explicit user action only). Decision made
+  at implementation time: transcripts now embed invisible HTML-comment role
+  markers, and older marker-less files fall back to a fence-aware heading
+  parse.
 - **File attachments by path**: attach images (and text files as context)
-  from disk, not just the clipboard.
-- **Reasoning summaries**: stream the Responses API reasoning-summary deltas
-  as dim "thinking…" text above the reply (`internal/ui/stream.go` only
-  handles `response.output_text.delta` today) — makes high-effort models
-  feel alive during long pauses.
-- **Session budget**: `budget_usd` config key; warn when the running
-  estimate crosses it.
+  from disk, not just the clipboard — ctrl+f opens a file picker bubble
+  over the conversation.
 
 ## Later — bigger bets
 
@@ -60,11 +54,6 @@ Now/Next/Later is priority, not versions.
   native Anthropic client (streaming, images, usage). Per-provider keys in
   the keychain (`keystore` service name per provider), picker grouped by
   provider. `base_url` support above is the stepping stone.
-- **In-chat search** through the transcript.
-- **Inline image preview** for pasted attachments via the kitty/iTerm2
-  graphics protocols, where supported.
-- **Multiple conversations (tabs)** — only if it can stay simple; one
-  screen at a time is part of the product.
 
 ## Infra & distribution
 
@@ -73,8 +62,7 @@ Now/Next/Later is priority, not versions.
   automate one happy-path flow.
 - **macOS signing + notarization** — removes the cask's quarantine-stripping
   hook.
-- **More channels**: Homebrew formula (Linux), winget, scoop, AUR, a Nix
-  flake — pick by demand.
+- **More channels**: Homebrew formula (Linux), winget.
 
 ## Standing decisions
 
@@ -82,6 +70,18 @@ Now/Next/Later is priority, not versions.
   user action; resume only ever loads a file the user chose to save.
 - **Multi-provider is the direction** (supersedes "OpenAI only"): compatible
   endpoints first, native providers after — never at the cost of the
-  zero-config OpenAI experience.
+  zero-config experience.
 - **Keyboard-first, one screen at a time**: features that add chrome must
   justify themselves.
+
+## Not for now, [DON'T DO]
+
+- **Reasoning summaries**: stream the Responses API reasoning-summary deltas
+  as dim "thinking…" text above the reply (`internal/ui/stream.go` only
+  handles `response.output_text.delta` today) — makes high-effort models
+  feel alive during long pauses.
+- **Session budget**: `budget_usd` config key; warn when the running
+  estimate crosses it.
+- **In-chat search** through the transcript.
+- **Inline image preview** for pasted attachments via the kitty/iTerm2
+  graphics protocols, where supported.

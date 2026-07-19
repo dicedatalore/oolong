@@ -142,6 +142,70 @@ verbosity = "chatty"
 			},
 		},
 		{
+			name: "base_url global and per-model",
+			data: `
+base_url = "http://localhost:11434/v1"
+
+[[models]]
+id = "llama3.3"
+base_url = "http://localhost:1234/v1"
+context_window = 128000
+`,
+			check: func(c Config) string {
+				if c.BaseURL != "http://localhost:11434/v1" {
+					return "global base_url not parsed"
+				}
+				if c.Models[0].BaseURL != "http://localhost:1234/v1" {
+					return "per-model base_url not parsed"
+				}
+				if c.Models[0].ContextWindow != 128000 {
+					return "context_window not parsed"
+				}
+				return ""
+			},
+		},
+		{
+			name:    "bad global base_url dropped",
+			data:    `base_url = "localhost:11434"`,
+			wantErr: `base_url "localhost:11434"`,
+			check: func(c Config) string {
+				if c.BaseURL != "" {
+					return "bad base_url kept"
+				}
+				return ""
+			},
+		},
+		{
+			name: "bad model base_url dropped, model kept",
+			data: `
+[[models]]
+id = "llama3.3"
+base_url = "not a url"
+`,
+			wantErr: `model llama3.3 base_url`,
+			check: func(c Config) string {
+				if len(c.Models) != 1 || c.Models[0].BaseURL != "" {
+					return "model or its bad base_url mishandled"
+				}
+				return ""
+			},
+		},
+		{
+			name: "negative context_window drops the model",
+			data: `
+[[models]]
+id = "llama3.3"
+context_window = -1
+`,
+			wantErr: "negative context_window",
+			check: func(c Config) string {
+				if c.CustomCatalog() {
+					return "model with negative context_window kept"
+				}
+				return ""
+			},
+		},
+		{
 			name:    "default_model must be in the catalog",
 			data:    `default_model = "gpt-nope"`,
 			wantErr: `default_model "gpt-nope"`,
@@ -186,6 +250,24 @@ id = "gpt-5.4"
 				t.Error(msg)
 			}
 		})
+	}
+}
+
+func TestCustomEndpoint(t *testing.T) {
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{"", false},
+		{OfficialBaseURL, false},
+		{OfficialBaseURL + "/", false},
+		{"http://localhost:11434/v1", true},
+		{"https://openrouter.ai/api/v1", true},
+	}
+	for _, tt := range tests {
+		if got := CustomEndpoint(tt.url); got != tt.want {
+			t.Errorf("CustomEndpoint(%q) = %v, want %v", tt.url, got, tt.want)
+		}
 	}
 }
 
