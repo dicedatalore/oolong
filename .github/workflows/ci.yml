@@ -28,9 +28,9 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
-  # One happy-path TUI flow (plus one-shot pipe mode) driven on a real pty
-  # against the fake API in e2e/ — catches breakage the unit tests can't,
-  # like the terminal-query handshake or key routing.
+  # OpenAI and Anthropic TUI flows (plus both one-shot paths) driven on a real
+  # pty against the fake API in e2e/ — catches breakage the unit tests can't,
+  # like the terminal-query handshake or provider/key routing.
   e2e:
     runs-on: ubuntu-latest
     steps:

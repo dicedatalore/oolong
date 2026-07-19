@@ -1,7 +1,7 @@
 name: Demo
 
 # Re-records demo/demo.gif with Charm VHS against the fake API in e2e/
-# (deterministic, keyless) and commits the result back to main.
+# (deterministic, fake credentials only) and commits the result back to main.
 #
 # Runs as the final job of the release workflow (workflow_call) once a new
 # tag has been cut and released, so the banner version in the GIF always

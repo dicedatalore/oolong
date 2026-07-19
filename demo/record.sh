@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Record demo/demo.gif with Charm VHS against the fake API from e2e/ —
-# deterministic, keyless, no real network. Needs vhs on PATH (plus its
+# deterministic, fake-credential-only, no real network. Needs vhs on PATH (plus its
 # ttyd/ffmpeg dependencies); the demo workflow installs those in CI.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -44,9 +44,26 @@ echo "   fakeapi on $ADDR"
 # env isolates it from any real key, config, or transcript directory.
 export PATH="$TMP/bin:$PATH"
 export OPENAI_API_KEY=sk-test
+export ANTHROPIC_API_KEY=sk-ant-test
 export OPENAI_BASE_URL="http://$ADDR/v1"
 export XDG_CONFIG_HOME="$TMP/xdg"
 export OOLONG_TRANSCRIPT_DIR="$TMP"
+
+# Keep the demo catalog compact while showing provider-aware routing. The
+# tape selects Claude, whose native Messages API is served by fakeapi.
+mkdir -p "$XDG_CONFIG_HOME/oolong"
+cat > "$XDG_CONFIG_HOME/oolong/config.toml" <<EOF
+[[models]]
+id = "gpt-5.6-luna"
+provider = "openai"
+description = "Fast OpenAI model"
+
+[[models]]
+id = "claude-sonnet-5"
+provider = "anthropic"
+description = "Frontier intelligence at scale"
+base_url = "http://$ADDR"
+EOF
 
 echo "== record"
 cd demo
