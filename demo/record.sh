@@ -17,9 +17,14 @@ trap cleanup EXIT
 
 echo "== build"
 mkdir -p "$TMP/bin"
+# Stamp the latest release tag so the banner doesn't show a pseudo-version
+# with a -dirty suffix; goreleaser stamps real releases the same way.
+VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo dev)
 # CGO off: the demo never pastes an image, and this keeps the build
 # dependency-free on CI runners.
-CGO_ENABLED=0 go build -o "$TMP/bin/oolong" .
+CGO_ENABLED=0 go build \
+    -ldflags "-X github.com/dicedatalore/oolong/internal/version.Version=$VERSION" \
+    -o "$TMP/bin/oolong" .
 go build -o "$TMP/fakeapi" ./e2e/fakeapi
 
 echo "== start fake API"
