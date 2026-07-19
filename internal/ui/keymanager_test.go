@@ -10,6 +10,7 @@ import (
 
 	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
+	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
 )
 
@@ -18,6 +19,7 @@ func newKeyManagerModel(t *testing.T) tea.Model {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	var model tea.Model = New(nil, "dark", config.Config{}, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
 	if model.(Model).state != statePicker {
@@ -34,6 +36,7 @@ func TestNoKeysPromptForKeyManager(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	var model tea.Model = New(nil, "dark", config.Config{}, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
 	am := model.(Model)
@@ -52,6 +55,7 @@ func TestDefaultModelsAppearOnlyForRelevantKey(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	model := New(nil, "dark", config.Config{}, "")
 	if got := len(model.picker.Items()); got != 0 {
 		t.Fatalf("initial defaults = %d, want none", got)
@@ -67,8 +71,15 @@ func TestDefaultModelsAppearOnlyForRelevantKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.refreshBuiltinCatalog()
+	if got, want := len(pickerModels(model)), builtinProviderCount("anthropic")+builtinProviderCount("openai"); got != want {
+		t.Errorf("OpenAI key exposed %d defaults, want %d", got, want)
+	}
+	if err := keystore.Set(keystore.Google, "AIza-test"); err != nil {
+		t.Fatal(err)
+	}
+	model.refreshBuiltinCatalog()
 	if got := len(pickerModels(model)); got != len(config.Builtin) {
-		t.Errorf("OpenAI key exposed %d defaults, want %d", got, len(config.Builtin))
+		t.Errorf("Google key exposed %d defaults, want all %d", got, len(config.Builtin))
 	}
 }
 
@@ -80,6 +91,40 @@ func TestAnthropicModelUsesAnthropicClient(t *testing.T) {
 	model := New(nil, "dark", cfg, "")
 	if _, ok := model.clientFor("claude-test").(*provideranthropic.Client); !ok {
 		t.Error("Anthropic model was not routed to the Anthropic client")
+	}
+}
+
+func TestGoogleModelUsesGoogleClient(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "AIza-test")
+	cfg := config.Config{Models: []config.Model{{ID: "gemini-test", Provider: "google"}}}
+	model := New(nil, "dark", cfg, "")
+	if _, ok := model.clientFor("gemini-test").(*providergoogle.Client); !ok {
+		t.Error("Google model was not routed to the Google client")
+	}
+}
+
+func TestKeyManagerCyclesThreeProviders(t *testing.T) {
+	model := newKeyManagerModel(t)
+	if got := model.(Model).keyProvider; got != keystore.OpenAI {
+		t.Fatalf("initial provider = %q", got)
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if got := model.(Model).keyProvider; got != keystore.Google {
+		t.Fatalf("two tabs landed on %q, want google", got)
+	}
+	if v := model.(Model).viewKeyManager(); !strings.Contains(v, "Google") {
+		t.Error("key manager view does not show the Google row")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if got := model.(Model).keyProvider; got != keystore.OpenAI {
+		t.Errorf("third tab landed on %q, want wrap to openai", got)
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if got := model.(Model).keyProvider; got != keystore.Google {
+		t.Errorf("up from openai landed on %q, want wrap to google", got)
 	}
 }
 

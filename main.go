@@ -12,6 +12,7 @@ import (
 
 	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
+	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/oneshot"
@@ -126,6 +127,8 @@ Flags:
 	keyProvider := keystore.OpenAI
 	if provider == "anthropic" {
 		keyProvider = keystore.Anthropic
+	} else if provider == "google" {
+		keyProvider = keystore.Google
 	}
 	if key := keystore.Resolve(keyProvider); key != "" || cfg.HasCustomEndpoint() {
 		if provider == "anthropic" {
@@ -133,6 +136,12 @@ Flags:
 				client = provideranthropic.New(key, provideranthropic.WithBaseURL(cfg.BaseURL))
 			} else {
 				client = provideranthropic.New(key)
+			}
+		} else if provider == "google" {
+			if cfg.BaseURL != "" {
+				client = providergoogle.New(key, providergoogle.WithBaseURL(cfg.BaseURL))
+			} else {
+				client = providergoogle.New(key)
 			}
 		} else if provider == "ollama" {
 			client = ollama.New(cfg.BaseURL)

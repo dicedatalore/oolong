@@ -1,10 +1,12 @@
-// Command fakeapi is a fake OpenAI and Anthropic API for driving Oolong
-// end-to-end. It serves both providers' model and streaming message shapes.
+// Command fakeapi is a fake OpenAI, Anthropic, and Google Gemini API for
+// driving Oolong end-to-end. It serves the providers' model and streaming
+// chat shapes.
 //
 // Environment:
 //
 //	REQLOG             append each /v1/responses request body to this file
 //	ANTHROPIC_REQLOG   append each /v1/messages request body to this file
+//	GEMINI_REQLOG      append each streamGenerateContent request body to this file
 //	REPLY_FILE     stream this file's text instead of the built-in chunks
 //	REPLY_DELAY_MS delay between streamed words (default 0; the demo uses
 //	               ~40 to look like a real model thinking)
@@ -15,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -33,6 +36,7 @@ func main() {
 	http.HandleFunc("/v1/models", models)
 	http.HandleFunc("/v1/responses", responses)
 	http.HandleFunc("/v1/messages", messages)
+	http.HandleFunc("/v1beta/models/", generateContent)
 
 	ln, err := net.Listen("tcp", os.Args[1])
 	if err != nil {
@@ -94,10 +98,27 @@ func messages(w http.ResponseWriter, r *http.Request) {
 	fl.Flush()
 }
 
+// generateContent fakes the Gemini API's streamGenerateContent SSE shape.
+func generateContent(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	logRequest("GEMINI_REQLOG", body)
+	w.Header().Set("Content-Type", "text/event-stream")
+	fl := w.(http.Flusher)
+	for _, chunk := range replyChunks() {
+		fmt.Fprintf(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":%s}],\"role\":\"model\"}}],\"usageMetadata\":{\"promptTokenCount\":10}}\n\n", strconv.Quote(chunk))
+		fl.Flush()
+		time.Sleep(replyDelay())
+	}
+	fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"parts\":[],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":30}}\n\n")
+	fl.Flush()
+}
+
 func logRequest(env string, body []byte) {
 	if path := os.Getenv(env); path != "" {
 		if file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-			fmt.Fprintf(file, "%s\n", body)
+			// Trimmed because some SDKs (genai) end the body with a newline,
+			// which would add blank log lines and break tail-based asserts.
+			fmt.Fprintf(file, "%s\n", bytes.TrimSpace(body))
 			file.Close()
 		}
 	}

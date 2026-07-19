@@ -34,6 +34,7 @@ func newCustomModel(t *testing.T, srv *httptest.Server, cfg config.Config) tea.M
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	var model tea.Model = New(clientFor(srv), "dark", cfg, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return model

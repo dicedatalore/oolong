@@ -14,14 +14,19 @@ type Provider string
 const (
 	OpenAI    Provider = "openai"
 	Anthropic Provider = "anthropic"
+	Google    Provider = "google"
 )
 
 func account(provider Provider) string { return string(provider) + "_api_key" }
 
-func envName(provider Provider) string {
+// EnvName is the environment variable that supplies a provider's key.
+// Google uses GEMINI_API_KEY, the Gemini API's documented variable.
+func EnvName(provider Provider) string {
 	switch provider {
 	case Anthropic:
 		return "ANTHROPIC_API_KEY"
+	case Google:
+		return "GEMINI_API_KEY"
 	default:
 		return "OPENAI_API_KEY"
 	}
@@ -46,7 +51,7 @@ func Delete(provider Provider) error {
 // DeleteAll removes every provider credential managed by Oolong.
 func DeleteAll() error {
 	var first error
-	for _, provider := range []Provider{OpenAI, Anthropic} {
+	for _, provider := range []Provider{OpenAI, Anthropic, Google} {
 		if err := Delete(provider); err != nil && first == nil {
 			first = err
 		}
@@ -57,7 +62,7 @@ func DeleteAll() error {
 // Resolve returns the provider key from its environment variable if set,
 // otherwise from the OS keychain. Keychain errors mean no stored key.
 func Resolve(provider Provider) string {
-	if key := os.Getenv(envName(provider)); key != "" {
+	if key := os.Getenv(EnvName(provider)); key != "" {
 		return key
 	}
 	if key, err := Get(provider); err == nil && key != "" {
@@ -68,7 +73,7 @@ func Resolve(provider Provider) string {
 
 // Status describes credential availability without exposing the secret.
 func Status(provider Provider) string {
-	if os.Getenv(envName(provider)) != "" {
+	if os.Getenv(EnvName(provider)) != "" {
 		return "environment"
 	}
 	if key, err := Get(provider); err == nil && key != "" {
@@ -78,5 +83,5 @@ func Status(provider Provider) string {
 }
 
 func Any() bool {
-	return Resolve(OpenAI) != "" || Resolve(Anthropic) != ""
+	return Resolve(OpenAI) != "" || Resolve(Anthropic) != "" || Resolve(Google) != ""
 }

@@ -29,7 +29,7 @@ type Model struct {
 	ReasoningEffort string  `toml:"reasoning_effort"`
 	Verbosity       string  `toml:"verbosity"`
 	BaseURL         string  `toml:"base_url"`       // optional per-model provider endpoint
-	Provider        string  `toml:"provider"`       // "openai", "anthropic", or "ollama"
+	Provider        string  `toml:"provider"`       // "openai", "anthropic", "google", or "ollama"
 	ContextWindow   int     `toml:"context_window"` // tokens; enables the ctx meter in the chat header
 }
 
@@ -53,6 +53,8 @@ var Builtin = []Model{
 	{ID: "claude-sonnet-5", Provider: "anthropic", Description: "Balanced speed, cost, and intelligence", InputRate: 2.00, OutputRate: 10.00, ContextWindow: 1_000_000},
 	{ID: "claude-opus-4-8", Provider: "anthropic", Description: "Powerful model for complex work", InputRate: 5.00, OutputRate: 25.00, ContextWindow: 1_000_000},
 	{ID: "claude-fable-5", Provider: "anthropic", Description: "Flagship model for the hardest problems", InputRate: 10.00, OutputRate: 50.00, ContextWindow: 1_000_000},
+	{ID: "gemini-3.5-flash", Provider: "google", Description: "Fast, capable everyday model", InputRate: 1.50, OutputRate: 9.00, ContextWindow: 1_000_000},
+	{ID: "gemini-3.1-flash-lite", Provider: "google", Description: "Lowest-latency budget model", InputRate: 0.25, OutputRate: 1.50, ContextWindow: 1_000_000},
 }
 
 // OfficialBaseURL is the endpoint the OpenAI SDK talks to by default.
@@ -79,11 +81,17 @@ func (c Config) Catalog() []Model {
 // models are checked against the API before the picker displays them.
 func (c Config) CustomCatalog() bool { return len(c.Models) > 0 }
 
+// KeyedProvider reports whether a provider always needs an API key, even on
+// a custom endpoint — their SDKs authenticate every request.
+func KeyedProvider(provider string) bool {
+	return provider == "anthropic" || provider == "google"
+}
+
 // HasCustomEndpoint reports whether any configured route can be used without
 // an OpenAI key. This lets a catalog containing only per-model local routes
 // reach the picker instead of being stopped by first-run key entry.
 func (c Config) HasCustomEndpoint() bool {
-	if c.Provider != "anthropic" && CustomEndpoint(c.BaseURL) {
+	if !KeyedProvider(c.Provider) && CustomEndpoint(c.BaseURL) {
 		return true
 	}
 	for _, m := range c.Models {
@@ -91,7 +99,7 @@ func (c Config) HasCustomEndpoint() bool {
 		if provider == "" {
 			provider = c.Provider
 		}
-		if provider != "anthropic" && CustomEndpoint(m.BaseURL) {
+		if !KeyedProvider(provider) && CustomEndpoint(m.BaseURL) {
 			return true
 		}
 	}
@@ -179,6 +187,11 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 # id = "claude-sonnet-5"
 # provider = "anthropic"
 # description = "Anthropic Claude Sonnet"
+#
+# [[models]]
+# id = "gemini-3.5-flash"
+# provider = "google"
+# description = "Google Gemini Flash"
 `
 
 // Init writes the scaffold config file and returns its path. An existing
@@ -198,6 +211,10 @@ func Init() (string, error) {
 }
 
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+func validProvider(p string) bool {
+	return p == "openai" || p == "anthropic" || p == "google" || p == "ollama"
+}
 
 // validEndpoint reports whether s parses as an absolute http(s) URL.
 func validEndpoint(s string) bool {
@@ -231,7 +248,7 @@ func parse(data string) (Config, error) {
 		drop("base_url %q is not an http(s) URL", c.BaseURL)
 		c.BaseURL = ""
 	}
-	if c.Provider != "" && c.Provider != "openai" && c.Provider != "anthropic" && c.Provider != "ollama" {
+	if c.Provider != "" && !validProvider(c.Provider) {
 		drop("provider %q is not supported", c.Provider)
 		c.Provider = ""
 	}
@@ -252,7 +269,7 @@ func parse(data string) (Config, error) {
 			drop("model %s base_url %q is not an http(s) URL", m.ID, m.BaseURL)
 			m.BaseURL = ""
 		}
-		if m.Provider != "" && m.Provider != "openai" && m.Provider != "anthropic" && m.Provider != "ollama" {
+		if m.Provider != "" && !validProvider(m.Provider) {
 			drop("model %s provider %q is not supported", m.ID, m.Provider)
 			m.Provider = ""
 		}

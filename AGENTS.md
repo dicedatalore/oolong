@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Oolong is an ephemeral, keyboard-driven terminal chat client written in Go. It supports OpenAI, Anthropic, Ollama, and OpenAI-compatible endpoints through a Bubble Tea TUI and a non-interactive one-shot mode.
+Oolong is an ephemeral, keyboard-driven terminal chat client written in Go. It supports OpenAI, Anthropic, Google, Ollama, and OpenAI-compatible endpoints through a Bubble Tea TUI and a non-interactive one-shot mode.
 
 Preserve the project's core principles:
 
@@ -15,7 +15,7 @@ Preserve the project's core principles:
 
 - `main.go`: CLI flags, configuration loading, provider setup, and TUI/one-shot entry points.
 - `internal/ui/`: Bubble Tea state, picker, chat, streaming, transcript/resume, key manager, and rendering.
-- `internal/openai/`, `internal/anthropic/`, `internal/ollama/`: provider clients.
+- `internal/openai/`, `internal/anthropic/`, `internal/google/`, `internal/ollama/`: provider clients.
 - `internal/config/`: TOML configuration and built-in model catalog.
 - `internal/oneshot/`: stdin/argument-driven streaming mode.
 - `internal/keystore/`: OS keychain integration.

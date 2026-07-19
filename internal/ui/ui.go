@@ -41,6 +41,7 @@ import (
 
 	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
+	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/openai"
@@ -137,6 +138,7 @@ type Model struct {
 	// immediately after a keychain save; stored secrets are never loaded here.
 	openAIKeyInput    textinput.Model
 	anthropicKeyInput textinput.Model
+	googleKeyInput    textinput.Model
 	keyProvider       keystore.Provider
 	keyStatuses       map[keystore.Provider]string
 	keyErr            string
@@ -164,6 +166,7 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 		input:             newChatInput(),
 		openAIKeyInput:    newKeyInput("sk-..."),
 		anthropicKeyInput: newKeyInput("sk-ant-..."),
+		googleKeyInput:    newKeyInput("AIza..."),
 		keyProvider:       keystore.OpenAI,
 		spin:              newSpinner(),
 		help:              help.New(),
@@ -225,6 +228,12 @@ func (m Model) newClient(key string) openai.ChatClient {
 		}
 		return provideranthropic.New(key)
 	}
+	if m.provider == "google" {
+		if m.baseURL != "" {
+			return providergoogle.New(key, providergoogle.WithBaseURL(m.baseURL))
+		}
+		return providergoogle.New(key)
+	}
 	if m.provider == "ollama" {
 		return ollama.New(m.baseURL)
 	}
@@ -268,6 +277,16 @@ func (m *Model) clientFor(id string) openai.ChatClient {
 			c = provideranthropic.New(key, provideranthropic.WithBaseURL(url))
 		} else {
 			c = provideranthropic.New(key)
+		}
+	} else if provider == "google" {
+		key := keystore.Resolve(keystore.Google)
+		if key == "" {
+			return nil
+		}
+		if url != "" {
+			c = providergoogle.New(key, providergoogle.WithBaseURL(url))
+		} else {
+			c = providergoogle.New(key)
 		}
 	} else if provider == "ollama" {
 		c = ollama.New(url)

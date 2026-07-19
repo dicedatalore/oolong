@@ -20,6 +20,7 @@ func newBuiltinPicker(t *testing.T, cfg config.Config) tea.Model {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	t.Setenv("GEMINI_API_KEY", "")
 	var model tea.Model = New(nil, "dark", cfg, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 28})
 	return model
@@ -38,6 +39,7 @@ func TestPickerHidesReasoningHelpWithoutModels(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	var model tea.Model = New(nil, "dark", config.Config{}, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 28})
 	am := model.(Model)
@@ -54,6 +56,7 @@ func TestPickerNoticeUsesAccentAndBlankSeparator(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	var model tea.Model = New(nil, "dark", config.Config{}, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
 	am := model.(Model)

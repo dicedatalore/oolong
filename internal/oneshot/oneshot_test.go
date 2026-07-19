@@ -112,6 +112,23 @@ func TestChooseModelUsesAvailableProviderKey(t *testing.T) {
 	}
 }
 
+func TestChooseModelPrefersGoogleWhenOnlyItsKeyIsSet(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "AIza-test")
+	var want string
+	for _, m := range config.Builtin {
+		if m.Provider == "google" {
+			want = m.ID
+			break
+		}
+	}
+	if got := chooseModel(config.Config{}); got != want {
+		t.Errorf("chooseModel() = %q, want first Google default %q", got, want)
+	}
+}
+
 func TestOneShotNothingToAsk(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	var out strings.Builder

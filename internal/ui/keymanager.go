@@ -12,9 +12,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
+	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
+
+// keyProviders is the key manager's row order; tab/↓ and ↑ cycle through it.
+var keyProviders = []keystore.Provider{keystore.OpenAI, keystore.Anthropic, keystore.Google}
 
 type keyCheckMsg struct {
 	provider keystore.Provider
@@ -31,41 +35,61 @@ func newKeyInput(placeholder string) textinput.Model {
 	return input
 }
 
+// keyInput returns the entry field belonging to a provider's row.
+func (m *Model) keyInput(provider keystore.Provider) *textinput.Model {
+	switch provider {
+	case keystore.Anthropic:
+		return &m.anthropicKeyInput
+	case keystore.Google:
+		return &m.googleKeyInput
+	}
+	return &m.openAIKeyInput
+}
+
 func (m *Model) openKeyManager() tea.Cmd {
 	m.state = stateKeyManager
 	m.keyProvider = keystore.OpenAI
 	m.keyErr = ""
-	m.openAIKeyInput.SetValue("")
-	m.anthropicKeyInput.SetValue("")
+	for _, provider := range keyProviders {
+		m.keyInput(provider).SetValue("")
+		m.keyInput(provider).Blur()
+	}
 	m.refreshKeyStatuses()
-	m.anthropicKeyInput.Blur()
-	return m.openAIKeyInput.Focus()
+	return m.keyInput(keystore.OpenAI).Focus()
 }
 
 func (m *Model) refreshKeyStatuses() {
-	m.keyStatuses = map[keystore.Provider]string{
-		keystore.OpenAI:    keystore.Status(keystore.OpenAI),
-		keystore.Anthropic: keystore.Status(keystore.Anthropic),
+	m.keyStatuses = make(map[keystore.Provider]string, len(keyProviders))
+	for _, provider := range keyProviders {
+		m.keyStatuses[provider] = keystore.Status(provider)
 	}
 }
 
 func (m *Model) selectKeyProvider(provider keystore.Provider) tea.Cmd {
 	m.keyProvider = provider
 	m.keyErr = ""
-	if provider == keystore.Anthropic {
-		m.openAIKeyInput.Blur()
-		return m.anthropicKeyInput.Focus()
+	for _, other := range keyProviders {
+		m.keyInput(other).Blur()
 	}
-	m.anthropicKeyInput.Blur()
-	return m.openAIKeyInput.Focus()
+	return m.keyInput(provider).Focus()
+}
+
+// stepKeyProvider returns the provider delta rows away, wrapping around.
+func (m Model) stepKeyProvider(delta int) keystore.Provider {
+	for i, provider := range keyProviders {
+		if provider == m.keyProvider {
+			return keyProviders[(i+delta+len(keyProviders))%len(keyProviders)]
+		}
+	}
+	return keyProviders[0]
 }
 
 func (m Model) closeKeyManager() (tea.Model, tea.Cmd) {
 	m.keyValidating = false
-	m.openAIKeyInput.SetValue("")
-	m.anthropicKeyInput.SetValue("")
-	m.openAIKeyInput.Blur()
-	m.anthropicKeyInput.Blur()
+	for _, provider := range keyProviders {
+		m.keyInput(provider).SetValue("")
+		m.keyInput(provider).Blur()
+	}
 	m.keyErr = ""
 	m.state = statePicker
 	// The old picker tick stopped scheduling when it observed the manager
@@ -75,10 +99,7 @@ func (m Model) closeKeyManager() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) activeKeyInput() textinput.Model {
-	if m.keyProvider == keystore.Anthropic {
-		return m.anthropicKeyInput
-	}
-	return m.openAIKeyInput
+	return *m.keyInput(m.keyProvider)
 }
 
 func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -92,11 +113,10 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "esc":
 			return m.closeKeyManager()
-		case "tab", "down", "up":
-			if m.keyProvider == keystore.OpenAI {
-				return m, m.selectKeyProvider(keystore.Anthropic)
-			}
-			return m, m.selectKeyProvider(keystore.OpenAI)
+		case "tab", "down":
+			return m, m.selectKeyProvider(m.stepKeyProvider(+1))
+		case "up":
+			return m, m.selectKeyProvider(m.stepKeyProvider(-1))
 		case "ctrl+d":
 			if err := keystore.Delete(m.keyProvider); err != nil {
 				m.keyErr = "couldn't delete key from OS keychain"
@@ -124,23 +144,23 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.keyErr = ""
 			m.keyValidating = true
-			if m.keyProvider == keystore.OpenAI {
-				return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-					return keyCheckMsg{provider: keystore.OpenAI, key: keyValue, err: openai.ValidateKey(keyValue)}
-				})
+			provider := m.keyProvider
+			validate := openai.ValidateKey
+			switch provider {
+			case keystore.Anthropic:
+				validate = provideranthropic.ValidateKey
+			case keystore.Google:
+				validate = providergoogle.ValidateKey
 			}
 			return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-				return keyCheckMsg{provider: keystore.Anthropic, key: keyValue, err: provideranthropic.ValidateKey(keyValue)}
+				return keyCheckMsg{provider: provider, key: keyValue, err: validate(keyValue)}
 			})
 		}
 	}
 
 	var cmd tea.Cmd
-	if m.keyProvider == keystore.Anthropic {
-		m.anthropicKeyInput, cmd = m.anthropicKeyInput.Update(msg)
-	} else {
-		m.openAIKeyInput, cmd = m.openAIKeyInput.Update(msg)
-	}
+	input := m.keyInput(m.keyProvider)
+	*input, cmd = input.Update(msg)
 	return m, cmd
 }
 
@@ -157,11 +177,7 @@ func (m Model) handleKeyCheck(msg keyCheckMsg) (tea.Model, tea.Cmd) {
 		m.keyErr = "couldn't save key to OS keychain"
 		return m, nil
 	}
-	if msg.provider == keystore.OpenAI {
-		m.openAIKeyInput.SetValue("")
-	} else {
-		m.anthropicKeyInput.SetValue("")
-	}
+	m.keyInput(msg.provider).SetValue("")
 	globalProvider := m.provider
 	if globalProvider == "" {
 		globalProvider = "openai"
@@ -185,8 +201,11 @@ func (m Model) handleKeyCheck(msg keyCheckMsg) (tea.Model, tea.Cmd) {
 }
 
 func providerName(provider keystore.Provider) string {
-	if provider == keystore.Anthropic {
+	switch provider {
+	case keystore.Anthropic:
 		return "Anthropic"
+	case keystore.Google:
+		return "Google"
 	}
 	return "OpenAI"
 }
@@ -207,8 +226,11 @@ func (m Model) keyRow(provider keystore.Provider, input textinput.Model) string 
 
 func (m Model) viewKeyManager() string {
 	header := headerBarStyle.Render(headerStyle.Render("API key manager"))
-	body := m.keyRow(keystore.OpenAI, m.openAIKeyInput) + "\n\n" +
-		m.keyRow(keystore.Anthropic, m.anthropicKeyInput)
+	rows := make([]string, 0, len(keyProviders))
+	for _, provider := range keyProviders {
+		rows = append(rows, m.keyRow(provider, *m.keyInput(provider)))
+	}
+	body := strings.Join(rows, "\n\n")
 	bottom := helpStyle.Render("tab/↑/↓: select • enter: validate/save • ctrl+d: delete • esc: back")
 	if m.keyValidating {
 		bottom = m.spin.View() + helpStyle.Render("validating "+providerName(m.keyProvider)+" key…")

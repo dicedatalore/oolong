@@ -91,6 +91,8 @@ func providerTitle(provider string) string {
 		return "OpenAI"
 	case "anthropic":
 		return "Anthropic"
+	case "google":
+		return "Google"
 	case "ollama":
 		return "Ollama"
 	}
@@ -134,6 +136,10 @@ func (m *Model) refreshBuiltinCatalog() {
 			models = append(models, model)
 		case "anthropic":
 			if keystore.Resolve(keystore.Anthropic) != "" {
+				models = append(models, model)
+			}
+		case "google":
+			if keystore.Resolve(keystore.Google) != "" {
 				models = append(models, model)
 			}
 		case "openai":

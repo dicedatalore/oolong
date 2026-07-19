@@ -63,6 +63,11 @@ id = "claude-sonnet-5"
 provider = "anthropic"
 description = "Frontier intelligence at scale"
 base_url = "http://$ADDR"
+
+[[models]]
+id = "gemini-3.5-flash"
+provider = "google"
+description = "Fast, capable everyday model"
 EOF
 
 echo "== record"

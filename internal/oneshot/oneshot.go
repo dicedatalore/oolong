@@ -15,6 +15,7 @@ import (
 
 	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
+	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/openai"
@@ -54,12 +55,14 @@ func Run(cfg config.Config, prompt, stdin string, out io.Writer) int {
 	keyProvider := keystore.OpenAI
 	if provider == "anthropic" {
 		keyProvider = keystore.Anthropic
+	} else if provider == "google" {
+		keyProvider = keystore.Google
 	}
 	key := keystore.Resolve(keyProvider)
-	keyless := provider == "ollama" || (provider != "anthropic" && config.CustomEndpoint(endpoint))
+	keyless := provider == "ollama" || (!config.KeyedProvider(provider) && config.CustomEndpoint(endpoint))
 	openAIEnvEndpoint := provider == "openai" && os.Getenv("OPENAI_BASE_URL") != ""
 	if key == "" && !openAIEnvEndpoint && !keyless {
-		fmt.Fprintf(os.Stderr, "no %s API key: press ctrl+k in the picker or set %s_API_KEY\n", provider, strings.ToUpper(provider))
+		fmt.Fprintf(os.Stderr, "no %s API key: press ctrl+k in the picker or set %s\n", provider, keystore.EnvName(keyProvider))
 		return 1
 	}
 	var client openai.ChatClient
@@ -68,6 +71,12 @@ func Run(cfg config.Config, prompt, stdin string, out io.Writer) int {
 			client = provideranthropic.New(key, provideranthropic.WithBaseURL(endpoint))
 		} else {
 			client = provideranthropic.New(key)
+		}
+	} else if provider == "google" {
+		if endpoint != "" {
+			client = providergoogle.New(key, providergoogle.WithBaseURL(endpoint))
+		} else {
+			client = providergoogle.New(key)
 		}
 	} else if provider == "ollama" {
 		client = ollama.New(endpoint)
@@ -125,6 +134,10 @@ func chooseModel(cfg config.Config) string {
 		switch provider {
 		case "anthropic":
 			if keystore.Resolve(keystore.Anthropic) != "" {
+				return model.ID
+			}
+		case "google":
+			if keystore.Resolve(keystore.Google) != "" {
 				return model.ID
 			}
 		case "ollama":

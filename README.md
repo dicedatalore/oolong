@@ -2,10 +2,10 @@
 
 [![CI](https://github.com/dicedatalore/oolong/actions/workflows/ci.yml/badge.svg)](https://github.com/dicedatalore/oolong/actions/workflows/ci.yml)
 
-**Simple ephemeral chat** — a fast, keyboard-driven terminal client for OpenAI, Anthropic, and Ollama models, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+**Simple ephemeral chat** — a fast, keyboard-driven terminal client for OpenAI, Anthropic, Google, and Ollama models, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 - **Ephemeral by design** — conversations live in your terminal and nowhere else. Nothing is written to disk unless you save a transcript, and OpenAI's server-side response storage is switched off. Close the window and the chat is gone.
-- **Three native clients** — use OpenAI's Responses API, Anthropic's Messages API, or Ollama's local chat API from the same interface. Services that implement OpenAI's Responses API, such as LM Studio and OpenRouter, are supported too.
+- **Four native clients** — use OpenAI's Responses API, Anthropic's Messages API, Google's Gemini API, or Ollama's local chat API from the same interface. Services that implement OpenAI's Responses API, such as LM Studio and OpenRouter, are supported too.
 - **Scriptable** — `git diff | oolong "write a commit message"` streams the answer straight to stdout, no TUI, so Oolong drops into any shell pipeline.
 
 ![oolong demo](./demo/demo.gif)
@@ -19,7 +19,7 @@
 - **Image input** — paste an image from the clipboard (`ctrl+v`) and it's attached to your next message
 - **File attachments** — `ctrl+f` picks an image or text file from disk to send with your next message
 - **One-shot mode** — `oolong "question"` (or `cat main.go | oolong "explain"`) streams the answer to stdout with no TUI, so Oolong works in scripts and pipelines
-- **Native provider support** — OpenAI, Anthropic, and Ollama clients stream text, images, files, system prompts, effort, and usage through their respective APIs
+- **Native provider support** — OpenAI, Anthropic, Google, and Ollama clients stream text, images, files, system prompts, effort, and usage through their respective APIs
 - **Custom OpenAI endpoints** — use the OpenAI client with a custom `base_url` for services such as LM Studio and OpenRouter, globally or per model
 - **Context meter** — the chat header tracks how much of the model's context window the conversation fills, and warns as it nears the limit
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
@@ -64,7 +64,7 @@ Prefer a standalone binary? Prebuilt archives for macOS, Linux, and Windows are 
 ## Getting started
 
 1. Run `oolong`.
-2. Press `ctrl+k` to open the key manager. It accepts OpenAI and Anthropic keys and stores them only in your OS keychain. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` take precedence when set.
+2. Press `ctrl+k` to open the key manager. It accepts OpenAI, Anthropic, and Google keys and stores them only in your OS keychain. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY` take precedence when set.
 3. Pick a model and start chatting.
 
 To add, replace, or remove a provider key, press `ctrl+k` on the model picker. `oolong --reset-key` removes all stored provider keys.
@@ -73,7 +73,7 @@ To add, replace, or remove a provider key, press `ctrl+k` on the model picker. `
 
 Oolong is fully usable with no configuration. To customize it, run `oolong config init` to scaffold a commented `~/.config/oolong/config.toml` (`$XDG_CONFIG_HOME` is respected); every key is optional.
 
-The catalog below demonstrates all three clients in one configuration. Adding any `[[models]]` entries replaces the built-in catalog, so include every model you want to appear in the picker:
+The catalog below demonstrates all four clients in one configuration. Adding any `[[models]]` entries replaces the built-in catalog, so include every model you want to appear in the picker:
 
 ```toml
 default_model = "gpt-5.6-terra"   # skip the picker on launch
@@ -102,6 +102,16 @@ output_rate = 10.00
 reasoning_effort = "medium"
 context_window = 1000000
 
+# Google client — uses the native Gemini API.
+[[models]]
+id = "gemini-3.5-flash"
+provider = "google"
+description = "Fast, capable everyday model"
+input_rate = 1.50
+output_rate = 9.00
+reasoning_effort = "medium"
+context_window = 1000000
+
 # Ollama client — uses the native /api/chat endpoint and needs no API key.
 [[models]]
 id = "gemma3"
@@ -113,7 +123,7 @@ context_window = 128000
 
 For a single run, `oolong --model <id>` opens a chat directly with a configured model, overriding `default_model`.
 
-`provider` selects the client and may be `openai`, `anthropic`, or `ollama`. It can be set globally or per model; per-model values let one catalog mix providers. A global `base_url` is inherited by models without their own endpoint, while a per-model value overrides it.
+`provider` selects the client and may be `openai`, `anthropic`, `google`, or `ollama`. It can be set globally or per model; per-model values let one catalog mix providers. A global `base_url` is inherited by models without their own endpoint, while a per-model value overrides it.
 
 `reasoning_effort` sets the provider's effort parameter; `verbosity` applies only to OpenAI's Responses API. Values are passed through because support varies by model generation. On the model picker, `←`/`→` adjust effort for the session. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
 
@@ -193,7 +203,7 @@ The mouse wheel scrolls the conversation too; hold `shift` while dragging to sel
 go test ./...
 ```
 
-The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live in `internal/openai`, `internal/anthropic`, and `internal/ollama`; supporting packages handle one-shot mode, configuration, keychain access, math formatting, and clipboard integration.
+The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live in `internal/openai`, `internal/anthropic`, `internal/google`, and `internal/ollama`; supporting packages handle one-shot mode, configuration, keychain access, math formatting, and clipboard integration.
 
 Releases are cut automatically on push to `main`: the version bump is derived from [conventional commit](https://www.conventionalcommits.org) messages — `feat:` → minor, `fix:` → patch, a breaking change → major — and commits of other types (`chore:`, `docs:`, `test:`, …) don't trigger a release.
 

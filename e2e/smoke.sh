@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# End-to-end smoke test: build Oolong, stand up the fake OpenAI/Anthropic API,
-# drive both providers through the TUI, then check both one-shot paths.
+# End-to-end smoke test: build Oolong, stand up the fake OpenAI/Anthropic/
+# Gemini API, drive all three providers through the TUI, then check the
+# one-shot paths.
 #
 # Everything is isolated: env API key, fake endpoint, empty XDG config, and
 # a temp transcript dir — no keychain, no real network, no user config.
@@ -24,6 +25,7 @@ go build -o "$TMP/fakeapi" ./e2e/fakeapi
 echo "== start fake API"
 REQLOG="$TMP/reqlog.txt" \
 ANTHROPIC_REQLOG="$TMP/anthropic-reqlog.txt" \
+GEMINI_REQLOG="$TMP/gemini-reqlog.txt" \
     "$TMP/fakeapi" 127.0.0.1:0 > "$TMP/fakeapi.out" &
 FAKEAPI_PID=$!
 for _ in $(seq 50); do
@@ -36,6 +38,7 @@ echo "   fakeapi on $ADDR"
 
 export OPENAI_API_KEY=sk-test
 export ANTHROPIC_API_KEY=sk-ant-test
+export GEMINI_API_KEY=AIza-test
 export OPENAI_BASE_URL="http://$ADDR/v1"
 export XDG_CONFIG_HOME="$TMP/xdg"
 export OOLONG_TRANSCRIPT_DIR="$TMP/transcripts"
@@ -52,6 +55,12 @@ description = "OpenAI smoke model"
 id = "claude-sonnet-5"
 provider = "anthropic"
 description = "Anthropic smoke model"
+base_url = "http://$ADDR"
+
+[[models]]
+id = "gemini-3.5-flash"
+provider = "google"
+description = "Gemini smoke model"
 base_url = "http://$ADDR"
 EOF
 
@@ -105,6 +114,20 @@ assert_contains "$TMP/anthropic-cap.txt" anthropic-tui \
     "claude-sonnet-5" "hello anthropic e2e" "fake reply done"
 assert_contains "$TMP/anthropic-reqlog.txt" anthropic-request \
     '"model":"claude-sonnet-5"' "hello anthropic e2e"
+
+echo "== Gemini TUI flow: picker -> Gemini -> chat -> send -> quit"
+OOLONG_BIN="$TMP/oolong" python3 e2e/drive.py "$TMP/gemini-cap.raw" "$TMP" \
+    "1.5:\x1b[B" "0.5:\x1b[B" "0.5:\r" "1.5:hello gemini e2e" "1.5:\r" "3:\x1b" "1:\x1b"
+strip_ansi "$TMP/gemini-cap.raw" > "$TMP/gemini-cap.txt"
+assert_contains "$TMP/gemini-cap.txt" gemini-tui \
+    "gemini-3.5-flash" "hello gemini e2e" "fake reply done"
+assert_contains "$TMP/gemini-reqlog.txt" gemini-request "hello gemini e2e"
+
+echo "== Gemini one-shot mode"
+"$TMP/oolong" --model gemini-3.5-flash "gemini one shot" > "$TMP/gemini-oneshot.out"
+assert_contains "$TMP/gemini-oneshot.out" gemini-oneshot "fake reply done"
+tail -1 "$TMP/gemini-reqlog.txt" > "$TMP/gemini-lastreq.txt"
+assert_contains "$TMP/gemini-lastreq.txt" gemini-oneshot-request "gemini one shot"
 
 echo "== Anthropic one-shot mode"
 "$TMP/oolong" --model claude-sonnet-5 "anthropic one shot" > "$TMP/anthropic-oneshot.out"
