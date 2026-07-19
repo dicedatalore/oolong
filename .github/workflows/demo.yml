@@ -3,17 +3,16 @@ name: Demo
 # Re-records demo/demo.gif with Charm VHS against the fake API in e2e/
 # (deterministic, keyless) and commits the result back to main.
 #
-# No loop by construction: the bot commit only touches demo.gif, which is
-# outside the paths filter below, and its "chore:" message never cuts a
-# release in the release workflow.
+# Runs as the final job of the release workflow (workflow_call) once a new
+# tag has been cut and released, so the banner version in the GIF always
+# matches the latest release. workflow_dispatch is the manual escape hatch
+# for re-recording without a release (e.g. after editing the tape).
+#
+# No loop by construction: the bot commit's "chore:" message never cuts a
+# release in the release workflow, so it can't retrigger this one.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - demo/demo.tape
-      - demo/reply.md
-      - demo/record.sh
+  workflow_call:
 
 permissions:
   contents: write
@@ -27,7 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # Pin to main (github.ref is a tag ref on the manual-tag-push
+          # release path) so the auto-commit lands on the branch;
           # record.sh stamps the banner version from the latest tag.
+          ref: main
           fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
@@ -35,7 +37,10 @@ jobs:
       - name: Install VHS and its dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-jetbrains-mono
+          # fonts-noto-cjk: the demo reply contains CJK text (乌龙茶) and
+          # JetBrains Mono has no CJK glyphs; the browser VHS records
+          # through falls back to Noto for them.
+          sudo apt-get install -y ffmpeg fonts-jetbrains-mono fonts-noto-cjk
           curl -fsSL -o /tmp/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
           sudo install /tmp/ttyd /usr/local/bin/ttyd
           go install github.com/charmbracelet/vhs@latest
