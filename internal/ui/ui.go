@@ -17,7 +17,7 @@
 //
 //   - picker.go   — choose a model (statePicker)
 //   - chat.go     — the conversation (stateChat)
-//   - keyentry.go — first-run API key prompt (stateKeyEntry)
+//   - keymanager.go — provider credential management (stateKeyManager)
 //
 // Supporting files: stream.go feeds the streamed model response into the
 // chat, transcript.go saves chats to disk, keymap.go declares the chat
@@ -51,7 +51,7 @@ type sessionState int
 const (
 	statePicker sessionState = iota
 	stateChat
-	stateKeyEntry
+	stateKeyManager
 )
 
 // Model holds all UI state. Following Bubble Tea convention it is passed by
@@ -65,6 +65,7 @@ type Model struct {
 
 	// model catalog (from the config file, or the built-in list)
 	catalog        []config.Model
+	builtinCatalog bool // active catalog is the compiled-in defaults
 	rates          map[string]modelRates
 	pendingCatalog []config.Model // custom catalog awaiting the availability check
 	pendingModel   string         // default_model to open once the first resize arrives
@@ -130,11 +131,15 @@ type Model struct {
 	costUSD        float64
 	estInputTokens int // estimated input tokens of the in-flight request
 
-	// API key entry
-	keyInput      textinput.Model
-	keyErr        string
-	keyNotice     string
-	keyValidating bool
+	// API key manager. Inputs contain only newly typed values and are cleared
+	// immediately after a keychain save; stored secrets are never loaded here.
+	openAIKeyInput    textinput.Model
+	anthropicKeyInput textinput.Model
+	keyProvider       keystore.Provider
+	keyStatuses       map[keystore.Provider]string
+	keyErr            string
+	keyNotice         string
+	keyValidating     bool
 
 	mdStyle    string // glamour style name matching the terminal background
 	client     openai.ChatClient
@@ -143,29 +148,30 @@ type Model struct {
 	initCmd    tea.Cmd // startup command, returned by Init
 }
 
-// New builds the initial model. A nil client (no stored API key yet) starts
-// the app on the key entry screen instead of the picker. cfgErr is a config
-// load problem to surface as a notice — a bad config never blocks launch.
+// New builds the initial model. The picker remains available without keys and
+// points to the key manager; cfgErr is surfaced without blocking launch.
 func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr string) Model {
 	if cfg.Accent != "" {
 		// Before the widgets below copy the accent into their own styles.
 		applyAccent(cfg.Accent)
 	}
 	m := Model{
-		state:         statePicker,
-		picker:        newPicker(),
-		input:         newChatInput(),
-		keyInput:      newKeyInput(),
-		spin:          newSpinner(),
-		help:          help.New(),
-		keys:          newChatKeyMap(),
-		mdStyle:       mdStyle,
-		client:        client,
-		logo:          renderLogoHeader(),
-		transcriptDir: cfg.TranscriptDir,
-		baseURL:       cfg.BaseURL,
-		provider:      cfg.Provider,
-		recallIdx:     -1,
+		state:             statePicker,
+		picker:            newPicker(),
+		input:             newChatInput(),
+		openAIKeyInput:    newKeyInput("sk-..."),
+		anthropicKeyInput: newKeyInput("sk-ant-..."),
+		keyProvider:       keystore.OpenAI,
+		spin:              newSpinner(),
+		help:              help.New(),
+		keys:              newChatKeyMap(),
+		mdStyle:           mdStyle,
+		client:            client,
+		logo:              renderLogoHeader(),
+		transcriptDir:     cfg.TranscriptDir,
+		baseURL:           cfg.BaseURL,
+		provider:          cfg.Provider,
+		recallIdx:         -1,
 	}
 	m.initCmd = sparkleTick(0)
 	if cfg.CustomCatalog() && !config.CustomEndpoint(cfg.BaseURL) {
@@ -179,12 +185,17 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 		m.pendingCatalog = cfg.Catalog()
 		m.catalog = m.pendingCatalog
 		m.rates = ratesFrom(m.pendingCatalog)
-		m.keyNotice = "checking model availability…"
 		if client, ok := client.(*openai.Client); ok {
+			m.keyNotice = "checking model availability…"
 			m.initCmd = tea.Batch(m.initCmd, checkModels(client))
 		}
 	} else {
-		m.setCatalog(cfg.Catalog())
+		if cfg.CustomCatalog() {
+			m.setCatalog(cfg.Catalog())
+		} else {
+			m.builtinCatalog = true
+			m.refreshBuiltinCatalog()
+		}
 	}
 	if cfg.DefaultModel != "" && client != nil {
 		// Skip the picker, but only once the first WindowSizeMsg supplies
@@ -197,9 +208,8 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 		m.keyNotice = cfgErr
 		m.chatNotice = cfgErr
 	}
-	if client == nil {
-		m.state = stateKeyEntry
-		m.initCmd = m.keyInput.Focus()
+	if client == nil && !keystore.Any() && !cfg.HasCustomEndpoint() && m.keyNotice == "" {
+		m.keyNotice = "no API keys configured — ctrl+k opens the key manager"
 	}
 	return m
 }
@@ -244,7 +254,7 @@ func (m *Model) clientFor(id string) openai.ChatClient {
 	if provider == "ollama" {
 		c = ollama.New(url)
 	} else {
-		c = openai.New(keystore.Resolve(), openai.WithBaseURL(url))
+		c = openai.New(keystore.Resolve(keystore.OpenAI), openai.WithBaseURL(url))
 	}
 	m.clients[cacheKey] = c
 	return c
@@ -306,8 +316,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updatePicker(msg)
 	case stateChat:
 		return m.updateChat(msg)
-	case stateKeyEntry:
-		return m.updateKeyEntry(msg)
+	case stateKeyManager:
+		return m.updateKeyManager(msg)
 	}
 	return m, nil
 }
@@ -363,8 +373,8 @@ func (m Model) View() tea.View {
 	switch m.state {
 	case statePicker:
 		v.SetContent(m.viewPicker())
-	case stateKeyEntry:
-		v.SetContent(m.viewKeyEntry())
+	case stateKeyManager:
+		v.SetContent(m.viewKeyManager())
 	case stateChat:
 		v.SetContent(m.viewChat())
 	}

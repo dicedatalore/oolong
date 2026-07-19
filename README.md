@@ -24,7 +24,7 @@
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
 - **Transcript export & resume** — `ctrl+s` saves the conversation as a timestamped markdown file; `oolong --resume <file>` picks it back up later
 - **Configurable** — an optional TOML config file sets a custom model catalog, a default model, reasoning effort and verbosity, endpoints, transcript directory, and accent color
-- **Keychain storage** — your API key lives in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service), not in a dotfile
+- **Keychain storage** — provider API keys live in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service), not in a dotfile
 - **Readable math** — LaTeX in responses is converted to plain Unicode instead of showing up as mangled backslashes
 
 ## Install
@@ -63,10 +63,10 @@ Prefer a standalone binary? Prebuilt archives for macOS, Linux, and Windows are 
 ## Getting started
 
 1. Run `oolong`.
-2. On first run, paste your [OpenAI API key](https://platform.openai.com/api-keys). It's validated against the API (no tokens spent) and saved to your OS keychain. Alternatively, set `OPENAI_API_KEY` in your environment — it takes precedence over the keychain.
+2. Press `ctrl+k` to open the key manager. It accepts OpenAI and Anthropic keys and stores them only in your OS keychain. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` take precedence when set.
 3. Pick a model and start chatting.
 
-To remove a stored key: press `ctrl+k` on the model picker, or run `oolong --reset-key`.
+To add, replace, or remove a provider key, press `ctrl+k` on the model picker. `oolong --reset-key` removes all stored provider keys.
 
 ## Configuration
 
@@ -161,7 +161,7 @@ The mouse wheel scrolls the conversation too; hold `shift` while dragging to sel
 
 ## Privacy
 
-- Your API key is stored in the OS keychain, never in a plain-text file.
+- Provider API keys are stored in the OS keychain, never in a plain-text file.
 - Chat history exists only in process memory unless you save it with `ctrl+s`.
 - Requests are sent with `store: false`, so OpenAI does not retain responses for the [Responses API](https://platform.openai.com/docs/api-reference/responses)'s server-side history.
 

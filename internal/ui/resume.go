@@ -176,7 +176,7 @@ func (t *Transcript) legacyParse(lines []string) {
 // Resume preloads a conversation reconstructed from a saved transcript. The
 // chat opens on the transcript's model once the first window size arrives;
 // without a client yet (no API key), the messages are kept and the picker
-// takes over after key entry.
+// prompts the user to open the key manager.
 func (m Model) Resume(t Transcript) Model {
 	m.messages = t.Messages
 	m.systemPrompt = t.System

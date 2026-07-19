@@ -40,6 +40,52 @@ func (m *Model) setCatalog(models []config.Model) {
 		items = append(items, newModelItem(cm))
 	}
 	m.picker.SetItems(items)
+	m.picker.AdditionalShortHelpKeys = pickerAdditionalHelp(len(models) > 0)
+}
+
+func pickerAdditionalHelp(hasModels bool) func() []key.Binding {
+	return func() []key.Binding {
+		bindings := make([]key.Binding, 0, 2)
+		if hasModels {
+			bindings = append(bindings,
+				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "reasoning effort")))
+		}
+		return append(bindings,
+			key.NewBinding(key.WithKeys("ctrl+k"), key.WithHelp("ctrl+k", "key manager")))
+	}
+}
+
+// refreshBuiltinCatalog filters only the compiled-in defaults. User-defined
+// catalogs are left untouched because they may describe keyless or otherwise
+// custom authentication schemes.
+func (m *Model) refreshBuiltinCatalog() {
+	if !m.builtinCatalog {
+		return
+	}
+	models := make([]config.Model, 0, len(config.Builtin))
+	for _, model := range config.Builtin {
+		provider := model.Provider
+		if provider == "" {
+			provider = "openai"
+		}
+		switch provider {
+		case "ollama":
+			models = append(models, model)
+		case "anthropic":
+			if keystore.Resolve(keystore.Anthropic) != "" {
+				models = append(models, model)
+			}
+		case "openai":
+			globalProvider := m.provider
+			if globalProvider == "" {
+				globalProvider = "openai"
+			}
+			if keystore.Resolve(keystore.OpenAI) != "" || (m.client != nil && globalProvider == "openai") {
+				models = append(models, model)
+			}
+		}
+	}
+	m.setCatalog(models)
 }
 
 // ratesFrom extracts the cost table from a catalog. Models without rates are
@@ -129,12 +175,7 @@ func newPicker() list.Model {
 	picker.KeyMap.NextPage = key.NewBinding()
 	picker.KeyMap.PrevPage = key.NewBinding()
 	picker.KeyMap.Quit = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "quit"))
-	picker.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "reasoning effort")),
-			key.NewBinding(key.WithKeys("ctrl+k"), key.WithHelp("ctrl+k", "drop API key")),
-		}
-	}
+	picker.AdditionalShortHelpKeys = pickerAdditionalHelp(false)
 	return picker
 }
 
@@ -215,7 +256,8 @@ func (m Model) handleModelsCheck(msg modelsCheckMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case len(kept) == 0:
-		m.setCatalog(config.Builtin)
+		m.builtinCatalog = true
+		m.refreshBuiltinCatalog()
 		m.keyNotice = "no configured model is available — using the built-in catalog"
 	case len(dropped) > 0:
 		m.setCatalog(kept)
@@ -280,12 +322,7 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+k":
-			keystore.Delete()
-			m.client = nil
-			m.keyNotice = ""
-			m.keyErr = ""
-			m.state = stateKeyEntry
-			return m, m.keyInput.Focus()
+			return m, m.openKeyManager()
 		case "left":
 			return m, m.adjustEffort(-1)
 		case "right":
@@ -293,6 +330,10 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			item, ok := m.picker.SelectedItem().(modelItem)
 			if !ok {
+				return m, nil
+			}
+			if m.clientFor(item.id) == nil {
+				m.keyNotice = "no API key for this provider — ctrl+k opens the key manager"
 				return m, nil
 			}
 			return m.openChat(item.id)
@@ -328,7 +369,7 @@ func (m Model) viewPicker() string {
 	// help widget can render the picker's keys directly.
 	bottomBar := m.help.View(m.picker)
 	if m.keyNotice != "" {
-		bottomBar = helpStyle.Render(m.keyNotice) + "\n" + bottomBar
+		bottomBar = noticeStyle.Render(m.keyNotice) + "\n\n" + bottomBar
 	}
 	bottomBarHeight := lipgloss.Height(bottomBar)
 

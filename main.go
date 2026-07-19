@@ -20,7 +20,7 @@ import (
 )
 
 func main() {
-	resetKey := flag.Bool("reset-key", false, "delete the stored OpenAI API key from the OS keychain and exit")
+	resetKey := flag.Bool("reset-key", false, "delete stored API keys from the OS keychain and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	model := flag.String("model", "", "open a chat with this model id, skipping the picker")
 	resume := flag.String("resume", "", "resume a conversation from a transcript saved with ctrl+s")
@@ -41,11 +41,11 @@ Flags:
 		return
 	}
 	if *resetKey {
-		if err := keystore.Delete(); err != nil {
+		if err := keystore.DeleteAll(); err != nil {
 			fmt.Fprintf(os.Stderr, "reset-key: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Stored API key deleted.")
+		fmt.Println("Stored API keys deleted.")
 		return
 	}
 	args := flag.Args()
@@ -114,7 +114,7 @@ Flags:
 	// A custom endpoint launches even without a key: local servers
 	// (Ollama, LM Studio) don't use one.
 	var client openai.ChatClient
-	if key := keystore.Resolve(); key != "" || cfg.HasCustomEndpoint() {
+	if key := keystore.Resolve(keystore.OpenAI); key != "" || cfg.HasCustomEndpoint() {
 		if cfg.Provider == "ollama" {
 			client = ollama.New(cfg.BaseURL)
 		} else if cfg.BaseURL != "" {

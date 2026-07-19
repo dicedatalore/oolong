@@ -50,7 +50,7 @@ func Run(cfg config.Config, prompt, stdin string, out io.Writer) int {
 		provider = cfg.Provider
 	}
 
-	key := keystore.Resolve()
+	key := keystore.Resolve(keystore.OpenAI)
 	if key == "" && os.Getenv("OPENAI_BASE_URL") == "" && !config.CustomEndpoint(endpoint) {
 		fmt.Fprintln(os.Stderr, "no API key: run oolong once to store one, or set OPENAI_API_KEY")
 		return 1
