@@ -46,8 +46,9 @@ var (
 			Border(lipgloss.ThickBorder(), false, false, false, true).
 			BorderForeground(purple).
 			PaddingLeft(1)
-	helpStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87"))
+	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	noticeStyle = lipgloss.NewStyle().Foreground(peach)
+	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87"))
 )
 
 // applyAccent swaps the primary accent for a configured "#RRGGBB" color,
@@ -70,4 +71,5 @@ func applyAccent(hex string) {
 	headerStyle = headerStyle.Background(peach)
 	userLabelStyle = userLabelStyle.Foreground(peach)
 	userBlockStyle = userBlockStyle.BorderForeground(peach)
+	noticeStyle = noticeStyle.Foreground(peach)
 }

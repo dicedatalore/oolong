@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/dicedatalore/oolong/actions/workflows/ci.yml/badge.svg)](https://github.com/dicedatalore/oolong/actions/workflows/ci.yml)
 
-**Simple ephemeral chat** — a fast, keyboard-driven terminal client for OpenAI models, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+**Simple ephemeral chat** — a fast, keyboard-driven terminal client for OpenAI, Anthropic, and Ollama models, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 - **Ephemeral by design** — conversations live in your terminal and nowhere else. Nothing is written to disk unless you save a transcript, and OpenAI's server-side response storage is switched off. Close the window and the chat is gone.
 - **Any OpenAI-compatible endpoint** — the official API works out of the box, or point `base_url` at Ollama, LM Studio, or OpenRouter and give local models the same polished UI.
@@ -20,11 +20,12 @@
 - **File attachments** — `ctrl+f` picks an image or text file from disk to send with your next message
 - **One-shot mode** — `oolong "question"` (or `cat main.go | oolong "explain"`) streams the answer to stdout with no TUI, so Oolong works in scripts and pipelines
 - **OpenAI-compatible endpoints** — point `base_url` at Ollama, LM Studio, OpenRouter, or any compatible server, globally or per model
+- **Native Anthropic support** — stream Claude models through Anthropic's Messages API with text, images, files, system prompts, effort, and usage reporting
 - **Context meter** — the chat header tracks how much of the model's context window the conversation fills, and warns as it nears the limit
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
 - **Transcript export & resume** — `ctrl+s` saves the conversation as a timestamped markdown file; `oolong --resume <file>` picks it back up later
 - **Configurable** — an optional TOML config file sets a custom model catalog, a default model, reasoning effort and verbosity, endpoints, transcript directory, and accent color
-- **Keychain storage** — your API key lives in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service), not in a dotfile
+- **Keychain storage** — provider API keys live in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service), not in a dotfile
 - **Readable math** — LaTeX in responses is converted to plain Unicode instead of showing up as mangled backslashes
 
 ## Install
@@ -63,10 +64,10 @@ Prefer a standalone binary? Prebuilt archives for macOS, Linux, and Windows are 
 ## Getting started
 
 1. Run `oolong`.
-2. On first run, paste your [OpenAI API key](https://platform.openai.com/api-keys). It's validated against the API (no tokens spent) and saved to your OS keychain. Alternatively, set `OPENAI_API_KEY` in your environment — it takes precedence over the keychain.
+2. Press `ctrl+k` to open the key manager. It accepts OpenAI and Anthropic keys and stores them only in your OS keychain. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` take precedence when set.
 3. Pick a model and start chatting.
 
-To remove a stored key: press `ctrl+k` on the model picker, or run `oolong --reset-key`.
+To add, replace, or remove a provider key, press `ctrl+k` on the model picker. `oolong --reset-key` removes all stored provider keys.
 
 ## Configuration
 
@@ -76,29 +77,47 @@ Oolong is fully usable with no configuration. To customize it, run `oolong confi
 default_model = "gpt-5.6-terra"   # skip the picker on launch
 transcript_dir = "~/notes/chats"  # OOLONG_TRANSCRIPT_DIR still wins
 accent = "#FFAF87"                # primary accent color
-# base_url = "http://localhost:11434/v1"  # any OpenAI-compatible endpoint
+# base_url = "https://api.openai.com/v1"
+# provider = "openai"
 
 # Replaces the built-in model catalog when present. Any model your API key
 # can access works — entries are checked against the API and unavailable
 # ones are hidden from the picker.
 [[models]]
 id = "gpt-5.4"
+provider = "openai"
 description = "Previous generation"
 input_rate = 1.25    # USD per 1M tokens, both optional
 output_rate = 10.00
 reasoning_effort = "medium"  # gpt-5.6 takes none | low | medium | high | xhigh
 verbosity = "low"            # low | medium | high
 context_window = 400000      # tokens; shows a ctx meter in the chat header
-# base_url = ""              # per-model endpoint, overrides the global one
+
+[[models]]
+id = "claude-sonnet-5"
+provider = "anthropic"
+description = "Anthropic Claude Sonnet"
+input_rate = 2.00
+output_rate = 10.00
+reasoning_effort = "medium"
+context_window = 1000000
+
+[[models]]
+id = "gemma3"
+provider = "ollama"
+description = "Local Gemma through Ollama"
+base_url = "http://localhost:11434"
 ```
 
 For a single run, `oolong --model <id>` opens a chat directly with any model your key can access, overriding `default_model`.
 
-`reasoning_effort` and `verbosity` set the model's default [Responses API](https://platform.openai.com/docs/api-reference/responses) parameters. They're passed through as-is — the supported values vary by model generation, and the API reports clearly if a model rejects one. On the model picker, `←`/`→` adjust the selected model's effort for the session, shown in the list item and later in the chat header. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
+`reasoning_effort` sets the provider's effort parameter; `verbosity` applies to OpenAI's Responses API. Values are passed through because support varies by model generation. On the model picker, `←`/`→` adjust effort for the session. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
 
 ### OpenAI-compatible endpoints
 
-`base_url` points Oolong at any server that speaks the OpenAI API — Ollama, LM Studio, OpenRouter, and friends. Set it globally, or per model to mix endpoints in one catalog. Local endpoints need no API key; on custom endpoints Oolong skips the OpenAI-specific key validation and model availability check. The `OPENAI_BASE_URL` environment variable overrides every configured endpoint.
+`base_url` points Oolong at a provider endpoint. Set it globally, or per model to mix endpoints in one catalog. Local OpenAI-compatible endpoints need no API key; Oolong skips OpenAI-specific validation for those routes. `OPENAI_BASE_URL` overrides configured OpenAI endpoints only.
+
+Set `provider = "openai"`, `provider = "anthropic"`, or `provider = "ollama"`. Provider selection can be global or per model, so one catalog can contain all three. Both `http://localhost:11434` and its `/v1` form are accepted for Ollama.
 
 ## Scripting
 
@@ -152,7 +171,7 @@ The mouse wheel scrolls the conversation too; hold `shift` while dragging to sel
 
 ## Privacy
 
-- Your API key is stored in the OS keychain, never in a plain-text file.
+- Provider API keys are stored in the OS keychain, never in a plain-text file.
 - Chat history exists only in process memory unless you save it with `ctrl+s`.
 - Requests are sent with `store: false`, so OpenAI does not retain responses for the [Responses API](https://platform.openai.com/docs/api-reference/responses)'s server-side history.
 

@@ -131,7 +131,7 @@ func TestResumeOpensChatWithConversation(t *testing.T) {
 	// Without a client the messages are kept for after key entry.
 	model = New(nil, "dark", config.Config{}, "").Resume(tr)
 	am = model.(Model)
-	if am.state != stateKeyEntry || len(am.messages) != 2 || am.pendingModel != "" {
+	if am.state != statePicker || len(am.messages) != 2 || am.pendingModel != "" {
 		t.Errorf("keyless resume: state=%v messages=%d pendingModel=%q",
 			am.state, len(am.messages), am.pendingModel)
 	}

@@ -28,7 +28,8 @@ type Model struct {
 	OutputRate      float64 `toml:"output_rate"`
 	ReasoningEffort string  `toml:"reasoning_effort"`
 	Verbosity       string  `toml:"verbosity"`
-	BaseURL         string  `toml:"base_url"`       // per-model OpenAI-compatible endpoint
+	BaseURL         string  `toml:"base_url"`       // optional per-model provider endpoint
+	Provider        string  `toml:"provider"`       // "openai", "anthropic", or "ollama"
 	ContextWindow   int     `toml:"context_window"` // tokens; enables the ctx meter in the chat header
 }
 
@@ -36,17 +37,22 @@ type Config struct {
 	DefaultModel  string  `toml:"default_model"`  // skip the picker on launch when set
 	TranscriptDir string  `toml:"transcript_dir"` // OOLONG_TRANSCRIPT_DIR env var still wins
 	Accent        string  `toml:"accent"`         // primary accent color, "#RRGGBB"
-	BaseURL       string  `toml:"base_url"`       // OpenAI-compatible endpoint for every model
+	BaseURL       string  `toml:"base_url"`       // optional provider endpoint for every model
+	Provider      string  `toml:"provider"`       // blank preserves the OpenAI default
 	Models        []Model `toml:"models"`         // replaces the built-in catalog when present
 }
 
 // Builtin is the model catalog compiled into Oolong, used when the config
 // file does not provide its own [[models]] catalog.
-// Rates per https://openai.com/api/pricing.
+// Rates per the providers' published API pricing.
 var Builtin = []Model{
-	{ID: "gpt-5.6-luna", Description: "For cost-sensitive workloads", InputRate: 1.00, OutputRate: 6.00, ContextWindow: 400_000},
-	{ID: "gpt-5.6-terra", Description: "Balances intelligence and cost", InputRate: 2.50, OutputRate: 15.00, ContextWindow: 400_000},
-	{ID: "gpt-5.6-sol", Description: "For complex professional work", InputRate: 5.00, OutputRate: 30.00, ContextWindow: 400_000},
+	{ID: "gpt-5.6-luna", Provider: "openai", Description: "For cost-sensitive workloads", InputRate: 1.00, OutputRate: 6.00, ContextWindow: 400_000},
+	{ID: "gpt-5.6-terra", Provider: "openai", Description: "Balances intelligence and cost", InputRate: 2.50, OutputRate: 15.00, ContextWindow: 400_000},
+	{ID: "gpt-5.6-sol", Provider: "openai", Description: "For complex professional work", InputRate: 5.00, OutputRate: 30.00, ContextWindow: 400_000},
+	{ID: "claude-haiku-4-5", Provider: "anthropic", Description: "Fastest Claude model", InputRate: 1.00, OutputRate: 5.00, ContextWindow: 200_000},
+	{ID: "claude-sonnet-5", Provider: "anthropic", Description: "Frontier intelligence at scale", InputRate: 2.00, OutputRate: 10.00, ContextWindow: 1_000_000},
+	{ID: "claude-opus-4-8", Provider: "anthropic", Description: "Complex reasoning and agentic coding", InputRate: 5.00, OutputRate: 25.00, ContextWindow: 1_000_000},
+	{ID: "claude-fable-5", Provider: "anthropic", Description: "Most capable widely released Claude model", InputRate: 10.00, OutputRate: 50.00, ContextWindow: 1_000_000},
 }
 
 // OfficialBaseURL is the endpoint the OpenAI SDK talks to by default.
@@ -72,6 +78,25 @@ func (c Config) Catalog() []Model {
 // CustomCatalog reports whether the catalog came from the config file; such
 // models are checked against the API before the picker displays them.
 func (c Config) CustomCatalog() bool { return len(c.Models) > 0 }
+
+// HasCustomEndpoint reports whether any configured route can be used without
+// an OpenAI key. This lets a catalog containing only per-model local routes
+// reach the picker instead of being stopped by first-run key entry.
+func (c Config) HasCustomEndpoint() bool {
+	if c.Provider != "anthropic" && CustomEndpoint(c.BaseURL) {
+		return true
+	}
+	for _, m := range c.Models {
+		provider := m.Provider
+		if provider == "" {
+			provider = c.Provider
+		}
+		if provider != "anthropic" && CustomEndpoint(m.BaseURL) {
+			return true
+		}
+	}
+	return false
+}
 
 // Path returns the config file location: $XDG_CONFIG_HOME/oolong/config.toml,
 // defaulting to ~/.config/oolong/config.toml.
@@ -125,11 +150,13 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 # to every model unless one sets its own base_url below. The OPENAI_BASE_URL
 # env var overrides both. No API key is required for local endpoints.
 # base_url = "http://localhost:11434/v1"
+# provider = "openai"             # protocol for the global endpoint
 
 # Replaces the built-in model catalog when present. Any model your API key
 # can access works; unavailable models are hidden from the picker.
 # [[models]]
 # id = "gpt-5.6-terra"
+# provider = "openai"
 # description = "Balances intelligence and cost"
 # input_rate = 2.50            # USD per 1M input tokens
 # output_rate = 15.00          # USD per 1M output tokens
@@ -137,6 +164,17 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 # verbosity = "low"            # low | medium | high
 # context_window = 400000      # tokens; shows a ctx meter in the chat header
 # base_url = ""                # per-model endpoint, overrides the global one
+#
+# [[models]]
+# id = "gemma3"
+# provider = "ollama"
+# description = "Local Gemma through Ollama"
+# base_url = "http://localhost:11434"
+#
+# [[models]]
+# id = "claude-sonnet-5"
+# provider = "anthropic"
+# description = "Anthropic Claude Sonnet"
 `
 
 // Init writes the scaffold config file and returns its path. An existing
@@ -189,6 +227,10 @@ func parse(data string) (Config, error) {
 		drop("base_url %q is not an http(s) URL", c.BaseURL)
 		c.BaseURL = ""
 	}
+	if c.Provider != "" && c.Provider != "openai" && c.Provider != "anthropic" && c.Provider != "ollama" {
+		drop("provider %q is not supported", c.Provider)
+		c.Provider = ""
+	}
 	models := c.Models[:0]
 	for _, m := range c.Models {
 		switch {
@@ -205,6 +247,10 @@ func parse(data string) (Config, error) {
 		if m.BaseURL != "" && !validEndpoint(m.BaseURL) {
 			drop("model %s base_url %q is not an http(s) URL", m.ID, m.BaseURL)
 			m.BaseURL = ""
+		}
+		if m.Provider != "" && m.Provider != "openai" && m.Provider != "anthropic" && m.Provider != "ollama" {
+			drop("model %s provider %q is not supported", m.ID, m.Provider)
+			m.Provider = ""
 		}
 		models = append(models, m)
 	}

@@ -13,8 +13,10 @@ import (
 	"strings"
 	"syscall"
 
+	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
@@ -29,10 +31,7 @@ func Run(cfg config.Config, prompt, stdin string, out io.Writer) int {
 		return 2
 	}
 
-	model := cfg.DefaultModel
-	if model == "" {
-		model = cfg.Catalog()[0].ID
-	}
+	model := chooseModel(cfg)
 	var cm config.Model
 	for _, entry := range cfg.Catalog() {
 		if entry.ID == model {
@@ -41,17 +40,38 @@ func Run(cfg config.Config, prompt, stdin string, out io.Writer) int {
 		}
 	}
 	endpoint := cm.BaseURL
+	provider := cm.Provider
 	if endpoint == "" {
 		endpoint = cfg.BaseURL
 	}
+	if provider == "" {
+		provider = cfg.Provider
+	}
+	if provider == "" {
+		provider = "openai"
+	}
 
-	key := keystore.Resolve()
-	if key == "" && os.Getenv("OPENAI_BASE_URL") == "" && !config.CustomEndpoint(endpoint) {
-		fmt.Fprintln(os.Stderr, "no API key: run oolong once to store one, or set OPENAI_API_KEY")
+	keyProvider := keystore.OpenAI
+	if provider == "anthropic" {
+		keyProvider = keystore.Anthropic
+	}
+	key := keystore.Resolve(keyProvider)
+	keyless := provider == "ollama" || (provider != "anthropic" && config.CustomEndpoint(endpoint))
+	openAIEnvEndpoint := provider == "openai" && os.Getenv("OPENAI_BASE_URL") != ""
+	if key == "" && !openAIEnvEndpoint && !keyless {
+		fmt.Fprintf(os.Stderr, "no %s API key: press ctrl+k in the picker or set %s_API_KEY\n", provider, strings.ToUpper(provider))
 		return 1
 	}
-	var client *openai.Client
-	if endpoint != "" {
+	var client openai.ChatClient
+	if provider == "anthropic" {
+		if endpoint != "" {
+			client = provideranthropic.New(key, provideranthropic.WithBaseURL(endpoint))
+		} else {
+			client = provideranthropic.New(key)
+		}
+	} else if provider == "ollama" {
+		client = ollama.New(endpoint)
+	} else if endpoint != "" {
 		client = openai.New(key, openai.WithBaseURL(endpoint))
 	} else {
 		client = openai.New(key)
@@ -84,6 +104,38 @@ func Run(cfg config.Config, prompt, stdin string, out io.Writer) int {
 		io.WriteString(out, "\n")
 	}
 	return 0
+}
+
+func chooseModel(cfg config.Config) string {
+	if cfg.DefaultModel != "" {
+		return cfg.DefaultModel
+	}
+	for _, model := range cfg.Catalog() {
+		provider := model.Provider
+		if provider == "" {
+			provider = cfg.Provider
+		}
+		if provider == "" {
+			provider = "openai"
+		}
+		endpoint := model.BaseURL
+		if endpoint == "" {
+			endpoint = cfg.BaseURL
+		}
+		switch provider {
+		case "anthropic":
+			if keystore.Resolve(keystore.Anthropic) != "" {
+				return model.ID
+			}
+		case "ollama":
+			return model.ID
+		default:
+			if keystore.Resolve(keystore.OpenAI) != "" || os.Getenv("OPENAI_BASE_URL") != "" || config.CustomEndpoint(endpoint) {
+				return model.ID
+			}
+		}
+	}
+	return cfg.Catalog()[0].ID
 }
 
 // PipedStdin reads piped standard input in full; piped is false when stdin

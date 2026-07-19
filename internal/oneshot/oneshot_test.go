@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/dicedatalore/oolong/internal/config"
 )
 
@@ -61,6 +63,45 @@ func TestOneShotStreamsToWriter(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("request body missing %s:\n%s", want, body)
 		}
+	}
+}
+
+func TestOneShotAnthropicProvider(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n")
+		fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello Claude\"}}\n\n")
+		fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n")
+		fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	cfg := config.Config{
+		DefaultModel: "claude-test",
+		Models:       []config.Model{{ID: "claude-test", Provider: "anthropic", BaseURL: srv.URL}},
+	}
+	var out strings.Builder
+	if code := Run(cfg, "hello", "", &out); code != 0 {
+		t.Fatalf("Run() exit code = %d, want 0", code)
+	}
+	if got := out.String(); got != "Hello Claude\n" {
+		t.Errorf("output = %q", got)
+	}
+	if !strings.Contains(string(body), `"model":"claude-test"`) {
+		t.Errorf("request missing Anthropic model: %s", body)
+	}
+}
+
+func TestChooseModelUsesAvailableProviderKey(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	if got := chooseModel(config.Config{}); got != "claude-haiku-4-5" {
+		t.Errorf("chooseModel() = %q, want first Anthropic default", got)
 	}
 }
 

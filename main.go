@@ -10,8 +10,10 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/muesli/termenv"
 
+	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/oneshot"
 	"github.com/dicedatalore/oolong/internal/openai"
 	"github.com/dicedatalore/oolong/internal/ui"
@@ -19,7 +21,7 @@ import (
 )
 
 func main() {
-	resetKey := flag.Bool("reset-key", false, "delete the stored OpenAI API key from the OS keychain and exit")
+	resetKey := flag.Bool("reset-key", false, "delete stored API keys from the OS keychain and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	model := flag.String("model", "", "open a chat with this model id, skipping the picker")
 	resume := flag.String("resume", "", "resume a conversation from a transcript saved with ctrl+s")
@@ -40,11 +42,11 @@ Flags:
 		return
 	}
 	if *resetKey {
-		if err := keystore.Delete(); err != nil {
+		if err := keystore.DeleteAll(); err != nil {
 			fmt.Fprintf(os.Stderr, "reset-key: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Stored API key deleted.")
+		fmt.Println("Stored API keys deleted.")
 		return
 	}
 	args := flag.Args()
@@ -68,13 +70,19 @@ Flags:
 	// usable config, and the error surfaces as a notice inside the UI.
 	cfg, cfgErr := config.Load()
 	if os.Getenv("OPENAI_BASE_URL") != "" {
-		// The env var wins over every configured endpoint — and keeps the
+		// The env var wins over configured OpenAI endpoints — and keeps the
 		// standard OpenAI behaviors (key validation, availability check),
 		// so a driver pointing at a fake server still exercises them. The
 		// SDK picks the env var up on its own.
-		cfg.BaseURL = ""
+		if cfg.Provider == "" || cfg.Provider == "openai" {
+			cfg.BaseURL = ""
+			cfg.Provider = ""
+		}
 		for i := range cfg.Models {
-			cfg.Models[i].BaseURL = ""
+			if cfg.Models[i].Provider == "" || cfg.Models[i].Provider == "openai" {
+				cfg.Models[i].BaseURL = ""
+				cfg.Models[i].Provider = "openai"
+			}
 		}
 	}
 	if *model != "" {
@@ -110,9 +118,25 @@ Flags:
 
 	// A custom endpoint launches even without a key: local servers
 	// (Ollama, LM Studio) don't use one.
-	var client *openai.Client
-	if key := keystore.Resolve(); key != "" || config.CustomEndpoint(cfg.BaseURL) {
-		if cfg.BaseURL != "" {
+	var client openai.ChatClient
+	provider := cfg.Provider
+	if provider == "" {
+		provider = "openai"
+	}
+	keyProvider := keystore.OpenAI
+	if provider == "anthropic" {
+		keyProvider = keystore.Anthropic
+	}
+	if key := keystore.Resolve(keyProvider); key != "" || cfg.HasCustomEndpoint() {
+		if provider == "anthropic" {
+			if cfg.BaseURL != "" {
+				client = provideranthropic.New(key, provideranthropic.WithBaseURL(cfg.BaseURL))
+			} else {
+				client = provideranthropic.New(key)
+			}
+		} else if provider == "ollama" {
+			client = ollama.New(cfg.BaseURL)
+		} else if cfg.BaseURL != "" {
 			client = openai.New(key, openai.WithBaseURL(cfg.BaseURL))
 		} else {
 			client = openai.New(key)

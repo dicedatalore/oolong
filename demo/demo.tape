@@ -1,7 +1,7 @@
 # Records the Oolong demo GIF. Don't run vhs on this directly — use
 # ./demo/record.sh, which builds the app, stands up the fake API from e2e/
-# (streaming demo/reply.md at a realistic pace), and sets the isolation env
-# before invoking vhs, so the recording is deterministic and keyless.
+# (streaming demo/reply.md at a realistic pace), and sets isolated fake
+# credentials before invoking vhs, so the recording is deterministic.
 # CI re-records it via .github/workflows/demo.yml after each tagged
 # release (or manually via workflow_dispatch).
 
@@ -18,7 +18,7 @@ Type "oolong" Sleep 2s  Enter
 
 Sleep 7s
 
-Down Sleep 1s Down Sleep 1s Up Sleep 1s Enter
+Down Sleep 1s Enter
 
 Sleep 2s
 

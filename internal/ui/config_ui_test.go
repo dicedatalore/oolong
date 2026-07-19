@@ -91,8 +91,8 @@ func TestAvailabilityCheckFallsBackWhenNothingAvailable(t *testing.T) {
 	model := newCustomModel(t, srv, config.Config{Models: customCatalog()})
 	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{}})
 	am := model.(Model)
-	if n := len(am.picker.Items()); n != len(config.Builtin) {
-		t.Fatalf("picker shows %d items, want the %d built-ins", n, len(config.Builtin))
+	if n, want := len(am.picker.Items()), builtinProviderCount("openai"); n != want {
+		t.Fatalf("picker shows %d items, want the %d OpenAI built-ins", n, want)
 	}
 	if !strings.Contains(am.keyNotice, "built-in") {
 		t.Errorf("keyNotice = %q, want a fallback notice", am.keyNotice)

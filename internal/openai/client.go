@@ -21,6 +21,12 @@ type Client struct {
 	api sdk.Client
 }
 
+// ChatClient is the provider-neutral streaming surface used by the TUI and
+// one-shot mode. Provider packages implement it independently.
+type ChatClient interface {
+	StreamChat(context.Context, string, []Message, Options, chan<- StreamEvent)
+}
+
 func New(apiKey string, opts ...option.RequestOption) *Client {
 	// No request timeout: it would bound the whole request including the
 	// streamed body, cutting off long responses mid-stream. The user can

@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+	"github.com/zalando/go-keyring"
 
 	"github.com/dicedatalore/oolong/internal/config"
 )
@@ -20,11 +21,54 @@ func TestPickerHelpHasNoFullHelpToggle(t *testing.T) {
 	}
 }
 
-func TestPickerEscClearsAppliedFilterBeforeQuitting(t *testing.T) {
+func TestPickerHidesReasoningHelpWithoutModels(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	var model tea.Model = New(nil, "dark", config.Config{}, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 28})
 	am := model.(Model)
-	am.state = statePicker // New(nil, …) starts on key entry; drive the picker anyway
+	help := am.help.View(am.picker)
+	if strings.Contains(help, "reasoning effort") {
+		t.Errorf("empty picker shows reasoning help: %q", help)
+	}
+	if !strings.Contains(help, "key manager") {
+		t.Errorf("empty picker hides key manager help: %q", help)
+	}
+}
+
+func TestPickerNoticeUsesAccentAndBlankSeparator(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	var model tea.Model = New(nil, "dark", config.Config{}, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+	am := model.(Model)
+	am.keyNotice = "credential notice"
+	view := am.viewPicker()
+	if !strings.Contains(view, noticeStyle.Render("credential notice")) {
+		t.Error("picker notice is not rendered with the accent notice style")
+	}
+	plain := ansi.ReplaceAllString(view, "")
+	lines := strings.Split(plain, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, "credential notice") {
+			continue
+		}
+		if i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) != "" {
+			t.Error("picker notice is not followed by an empty row")
+		}
+		return
+	}
+	t.Fatal("picker notice not found")
+}
+
+func TestPickerEscClearsAppliedFilterBeforeQuitting(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test")
+	var model tea.Model = New(nil, "dark", config.Config{}, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 28})
+	am := model.(Model)
+	am.state = statePicker
 	model = am
 
 	// Type a filter and apply it with enter.

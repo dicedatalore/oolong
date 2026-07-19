@@ -165,6 +165,58 @@ context_window = 128000
 			},
 		},
 		{
+			name: "ollama provider is opt in globally and per model",
+			data: `
+base_url = "http://localhost:11434"
+provider = "ollama"
+[[models]]
+id = "gemma3"
+base_url = "http://other-host:11434/v1"
+provider = "ollama"
+`,
+			check: func(c Config) string {
+				if c.Provider != "ollama" || c.Models[0].Provider != "ollama" {
+					return "ollama providers not parsed"
+				}
+				return ""
+			},
+		},
+		{
+			name:    "unknown providers are dropped",
+			data:    "provider = \"automatic\"",
+			wantErr: `provider "automatic"`,
+			check: func(c Config) string {
+				if c.Provider != "" {
+					return "unknown provider kept"
+				}
+				return ""
+			},
+		},
+		{
+			name: "openai provider can be explicit",
+			data: "provider = \"openai\"",
+			check: func(c Config) string {
+				if c.Provider != "openai" {
+					return "explicit OpenAI provider not parsed"
+				}
+				return ""
+			},
+		},
+		{
+			name: "anthropic provider can be explicit",
+			data: `
+[[models]]
+id = "claude-sonnet-5"
+provider = "anthropic"
+`,
+			check: func(c Config) string {
+				if c.Models[0].Provider != "anthropic" {
+					return "explicit Anthropic provider not parsed"
+				}
+				return ""
+			},
+		},
+		{
 			name:    "bad global base_url dropped",
 			data:    `base_url = "localhost:11434"`,
 			wantErr: `base_url "localhost:11434"`,
@@ -268,6 +320,30 @@ func TestCustomEndpoint(t *testing.T) {
 		if got := CustomEndpoint(tt.url); got != tt.want {
 			t.Errorf("CustomEndpoint(%q) = %v, want %v", tt.url, got, tt.want)
 		}
+	}
+}
+
+func TestHasCustomEndpointIncludesPerModelRoutes(t *testing.T) {
+	c := Config{Models: []Model{{ID: "gemma3", BaseURL: "http://localhost:11434", Provider: "ollama"}}}
+	if !c.HasCustomEndpoint() {
+		t.Error("per-model Ollama route was not detected")
+	}
+	if (Config{}).HasCustomEndpoint() {
+		t.Error("default config reports a custom endpoint")
+	}
+}
+
+func TestAnthropicEndpointStillRequiresAKey(t *testing.T) {
+	c := Config{Models: []Model{{ID: "claude-test", Provider: "anthropic", BaseURL: "https://api.anthropic.com"}}}
+	if c.HasCustomEndpoint() {
+		t.Error("Anthropic endpoint was treated as a keyless custom route")
+	}
+}
+
+func TestAnthropicGlobalProviderAppliesToModelEndpoints(t *testing.T) {
+	c := Config{Provider: "anthropic", Models: []Model{{ID: "claude-test", BaseURL: "https://api.anthropic.com"}}}
+	if c.HasCustomEndpoint() {
+		t.Error("inherited Anthropic endpoint was treated as keyless")
 	}
 }
 

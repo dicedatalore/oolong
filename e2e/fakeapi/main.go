@@ -1,11 +1,10 @@
-// Command fakeapi is a fake OpenAI API for driving Oolong end-to-end:
-// GET /v1/models returns a fixed catalog and POST /v1/responses streams an
-// SSE reply. It backs the CI smoke test (e2e/smoke.sh) and the demo GIF
-// recording (demo/record.sh).
+// Command fakeapi is a fake OpenAI and Anthropic API for driving Oolong
+// end-to-end. It serves both providers' model and streaming message shapes.
 //
 // Environment:
 //
-//	REQLOG         append each /v1/responses request body to this file
+//	REQLOG             append each /v1/responses request body to this file
+//	ANTHROPIC_REQLOG   append each /v1/messages request body to this file
 //	REPLY_FILE     stream this file's text instead of the built-in chunks
 //	REPLY_DELAY_MS delay between streamed words (default 0; the demo uses
 //	               ~40 to look like a real model thinking)
@@ -33,6 +32,7 @@ func main() {
 	}
 	http.HandleFunc("/v1/models", models)
 	http.HandleFunc("/v1/responses", responses)
+	http.HandleFunc("/v1/messages", messages)
 
 	ln, err := net.Listen("tcp", os.Args[1])
 	if err != nil {
@@ -45,6 +45,13 @@ func main() {
 
 func models(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if r.Header.Get("x-api-key") != "" {
+		fmt.Fprint(w, `{"data":[`+
+			`{"id":"claude-haiku-4-5","created_at":"2026-01-01T00:00:00Z","display_name":"Claude Haiku 4.5","type":"model"},`+
+			`{"id":"claude-sonnet-5","created_at":"2026-01-01T00:00:00Z","display_name":"Claude Sonnet 5","type":"model"}],`+
+			`"has_more":false,"first_id":"claude-haiku-4-5","last_id":"claude-sonnet-5"}`)
+		return
+	}
 	fmt.Fprint(w, `{"object":"list","data":[`+
 		`{"id":"gpt-5.6-luna","object":"model","created":1,"owned_by":"openai"},`+
 		`{"id":"gpt-5.6-terra","object":"model","created":1,"owned_by":"openai"},`+
@@ -53,12 +60,7 @@ func models(w http.ResponseWriter, r *http.Request) {
 
 func responses(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
-	if reqlog := os.Getenv("REQLOG"); reqlog != "" {
-		if f, err := os.OpenFile(reqlog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-			fmt.Fprintf(f, "%s\n", body)
-			f.Close()
-		}
-	}
+	logRequest("REQLOG", body)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	fl := w.(http.Flusher)
@@ -73,6 +75,39 @@ func responses(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":30,\"total_tokens\":40}}}\n\n")
 	fl.Flush()
+}
+
+func messages(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	logRequest("ANTHROPIC_REQLOG", body)
+	w.Header().Set("Content-Type", "text/event-stream")
+	fl := w.(http.Flusher)
+	fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10}}}\n\n")
+	fl.Flush()
+	for _, chunk := range replyChunks() {
+		fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%s}}\n\n", strconv.Quote(chunk))
+		fl.Flush()
+		time.Sleep(replyDelay())
+	}
+	fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":30}}\n\n")
+	fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	fl.Flush()
+}
+
+func logRequest(env string, body []byte) {
+	if path := os.Getenv(env); path != "" {
+		if file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintf(file, "%s\n", body)
+			file.Close()
+		}
+	}
+}
+
+func replyDelay() time.Duration {
+	if ms, err := strconv.Atoi(os.Getenv("REPLY_DELAY_MS")); err == nil {
+		return time.Duration(ms) * time.Millisecond
+	}
+	return 0
 }
 
 // replyChunks returns the reply as streamable deltas: REPLY_FILE split into

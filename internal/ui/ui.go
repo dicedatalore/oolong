@@ -17,7 +17,7 @@
 //
 //   - picker.go   — choose a model (statePicker)
 //   - chat.go     — the conversation (stateChat)
-//   - keyentry.go — first-run API key prompt (stateKeyEntry)
+//   - keymanager.go — provider credential management (stateKeyManager)
 //
 // Supporting files: stream.go feeds the streamed model response into the
 // chat, transcript.go saves chats to disk, keymap.go declares the chat
@@ -39,8 +39,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
+	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
@@ -50,7 +52,7 @@ type sessionState int
 const (
 	statePicker sessionState = iota
 	stateChat
-	stateKeyEntry
+	stateKeyManager
 )
 
 // Model holds all UI state. Following Bubble Tea convention it is passed by
@@ -64,15 +66,17 @@ type Model struct {
 
 	// model catalog (from the config file, or the built-in list)
 	catalog        []config.Model
+	builtinCatalog bool // active catalog is the compiled-in defaults
 	rates          map[string]modelRates
 	pendingCatalog []config.Model // custom catalog awaiting the availability check
 	pendingModel   string         // default_model to open once the first resize arrives
 	transcriptDir  string         // transcript_dir from config; the env var wins
 	baseURL        string         // global base_url from config; blank when the env var overrides
+	provider       string         // global endpoint protocol; blank means OpenAI
 
 	// clients for models with their own base_url, keyed by endpoint and
 	// built on first use; m.client serves the global endpoint.
-	clients map[string]*openai.Client
+	clients map[string]openai.ChatClient
 
 	// model picker
 	picker list.Model
@@ -128,44 +132,51 @@ type Model struct {
 	costUSD        float64
 	estInputTokens int // estimated input tokens of the in-flight request
 
-	// API key entry
-	keyInput      textinput.Model
-	keyErr        string
-	keyNotice     string
-	keyValidating bool
+	// API key manager. Inputs contain only newly typed values and are cleared
+	// immediately after a keychain save; stored secrets are never loaded here.
+	openAIKeyInput    textinput.Model
+	anthropicKeyInput textinput.Model
+	keyProvider       keystore.Provider
+	keyStatuses       map[keystore.Provider]string
+	keyErr            string
+	keyNotice         string
+	keyValidating     bool
 
 	mdStyle    string // glamour style name matching the terminal background
-	client     *openai.Client
+	client     openai.ChatClient
 	logo       string
 	sparkleTag int
 	initCmd    tea.Cmd // startup command, returned by Init
 }
 
-// New builds the initial model. A nil client (no stored API key yet) starts
-// the app on the key entry screen instead of the picker. cfgErr is a config
-// load problem to surface as a notice — a bad config never blocks launch.
-func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string) Model {
+// New builds the initial model. The picker remains available without keys and
+// points to the key manager; cfgErr is surfaced without blocking launch.
+func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr string) Model {
 	if cfg.Accent != "" {
 		// Before the widgets below copy the accent into their own styles.
 		applyAccent(cfg.Accent)
 	}
 	m := Model{
-		state:         statePicker,
-		picker:        newPicker(),
-		input:         newChatInput(),
-		keyInput:      newKeyInput(),
-		spin:          newSpinner(),
-		help:          help.New(),
-		keys:          newChatKeyMap(),
-		mdStyle:       mdStyle,
-		client:        client,
-		logo:          renderLogoHeader(),
-		transcriptDir: cfg.TranscriptDir,
-		baseURL:       cfg.BaseURL,
-		recallIdx:     -1,
+		state:             statePicker,
+		picker:            newPicker(),
+		input:             newChatInput(),
+		openAIKeyInput:    newKeyInput("sk-..."),
+		anthropicKeyInput: newKeyInput("sk-ant-..."),
+		keyProvider:       keystore.OpenAI,
+		spin:              newSpinner(),
+		help:              help.New(),
+		keys:              newChatKeyMap(),
+		mdStyle:           mdStyle,
+		client:            client,
+		logo:              renderLogoHeader(),
+		transcriptDir:     cfg.TranscriptDir,
+		baseURL:           cfg.BaseURL,
+		provider:          cfg.Provider,
+		recallIdx:         -1,
 	}
 	m.initCmd = sparkleTick(0)
-	if cfg.CustomCatalog() && !config.CustomEndpoint(cfg.BaseURL) {
+	openAIClient, canCheckOpenAI := client.(*openai.Client)
+	if cfg.CustomCatalog() && !config.CustomEndpoint(cfg.BaseURL) && canCheckOpenAI {
 		// Config-supplied models show in the picker only once the API
 		// confirms they exist; the check starts now, or from handleKeyCheck
 		// when key entry has to supply the client first. The catalog itself
@@ -177,13 +188,16 @@ func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string
 		m.catalog = m.pendingCatalog
 		m.rates = ratesFrom(m.pendingCatalog)
 		m.keyNotice = "checking model availability…"
-		if client != nil {
-			m.initCmd = tea.Batch(m.initCmd, checkModels(client))
-		}
+		m.initCmd = tea.Batch(m.initCmd, checkModels(openAIClient))
 	} else {
-		m.setCatalog(cfg.Catalog())
+		if cfg.CustomCatalog() {
+			m.setCatalog(cfg.Catalog())
+		} else {
+			m.builtinCatalog = true
+			m.refreshBuiltinCatalog()
+		}
 	}
-	if cfg.DefaultModel != "" && client != nil {
+	if cfg.DefaultModel != "" && m.clientFor(cfg.DefaultModel) != nil {
 		// Skip the picker, but only once the first WindowSizeMsg supplies
 		// real dimensions — opening the chat now would lay out at zero size.
 		m.pendingModel = cfg.DefaultModel
@@ -194,16 +208,24 @@ func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string
 		m.keyNotice = cfgErr
 		m.chatNotice = cfgErr
 	}
-	if client == nil {
-		m.state = stateKeyEntry
-		m.initCmd = m.keyInput.Focus()
+	if client == nil && !keystore.Any() && !cfg.HasCustomEndpoint() && m.keyNotice == "" {
+		m.keyNotice = "no API keys configured — ctrl+k opens the key manager"
 	}
 	return m
 }
 
 // newClient builds a client for the global endpoint with the given key,
 // honoring a config base_url. Used when key entry replaces the client.
-func (m Model) newClient(key string) *openai.Client {
+func (m Model) newClient(key string) openai.ChatClient {
+	if m.provider == "anthropic" {
+		if m.baseURL != "" {
+			return provideranthropic.New(key, provideranthropic.WithBaseURL(m.baseURL))
+		}
+		return provideranthropic.New(key)
+	}
+	if m.provider == "ollama" {
+		return ollama.New(m.baseURL)
+	}
 	if m.baseURL != "" {
 		return openai.New(key, openai.WithBaseURL(m.baseURL))
 	}
@@ -213,19 +235,49 @@ func (m Model) newClient(key string) *openai.Client {
 // clientFor returns the client to talk to a model with: the default client,
 // unless the model's catalog entry names its own base_url, in which case a
 // client for that endpoint is built (once) with the same key.
-func (m *Model) clientFor(id string) *openai.Client {
-	url := m.modelConfig(id).BaseURL
-	if url == "" || url == m.baseURL {
+func (m *Model) clientFor(id string) openai.ChatClient {
+	cm := m.modelConfig(id)
+	url := cm.BaseURL
+	globalProvider := m.provider
+	if globalProvider == "" {
+		globalProvider = "openai"
+	}
+	provider := cm.Provider
+	if provider == "" {
+		provider = globalProvider
+	}
+	if (url == "" || url == m.baseURL) && provider == globalProvider {
 		return m.client
 	}
-	if c, ok := m.clients[url]; ok {
+	cacheKey := provider + "\x00" + url
+	if c, ok := m.clients[cacheKey]; ok {
 		return c
 	}
 	if m.clients == nil {
-		m.clients = make(map[string]*openai.Client)
+		m.clients = make(map[string]openai.ChatClient)
 	}
-	c := openai.New(keystore.Resolve(), openai.WithBaseURL(url))
-	m.clients[url] = c
+	var c openai.ChatClient
+	if provider == "anthropic" {
+		key := keystore.Resolve(keystore.Anthropic)
+		if key == "" {
+			return nil
+		}
+		if url != "" {
+			c = provideranthropic.New(key, provideranthropic.WithBaseURL(url))
+		} else {
+			c = provideranthropic.New(key)
+		}
+	} else if provider == "ollama" {
+		c = ollama.New(url)
+	} else {
+		key := keystore.Resolve(keystore.OpenAI)
+		if url != "" {
+			c = openai.New(key, openai.WithBaseURL(url))
+		} else {
+			c = openai.New(key)
+		}
+	}
+	m.clients[cacheKey] = c
 	return c
 }
 
@@ -285,8 +337,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updatePicker(msg)
 	case stateChat:
 		return m.updateChat(msg)
-	case stateKeyEntry:
-		return m.updateKeyEntry(msg)
+	case stateKeyManager:
+		return m.updateKeyManager(msg)
 	}
 	return m, nil
 }
@@ -342,8 +394,8 @@ func (m Model) View() tea.View {
 	switch m.state {
 	case statePicker:
 		v.SetContent(m.viewPicker())
-	case stateKeyEntry:
-		v.SetContent(m.viewKeyEntry())
+	case stateKeyManager:
+		v.SetContent(m.viewKeyManager())
 	case stateChat:
 		v.SetContent(m.viewChat())
 	}
