@@ -48,24 +48,12 @@ Now/Next/Later is priority, not versions.
 
 ## Later — bigger bets
 
-- **Native multi-provider**: extract a provider interface from
-  `internal/openai` (`StreamChat`, `ListModels`, `ValidateKey` are the
-  seams; `Message`/`StreamEvent` are already provider-neutral), then a
-  native Anthropic client (streaming, images, usage). Per-provider keys in
-  the keychain (`keystore` service name per provider), picker grouped by
-  provider. `base_url` support above is the stepping stone.
-- **Key manager (OpenAI + Anthropic keys)** — phase 1 of native
-  multi-provider. `keystore` gains a `Provider` type with per-provider
-  keychain accounts (`openai_api_key` stays as-is, so no migration) plus a
-  `Source()` for the env/keychain/not-set display. Picker ctrl+k opens a
-  two-row manager screen (add/edit/remove, masked key tails, env rows
-  read-only) instead of today's delete-on-the-spot. Key entry becomes
-  provider-aware; Anthropic validation is a bare `GET /v1/models` in a new
-  `internal/anthropic` package the native client later grows into. An
-  Anthropic key is inert until that client lands — ship anyway for the
-  non-destructive ctrl+k and the keystore foundation. First-run stays
-  OpenAI-only key entry (zero-config decision). `keyring.MockInit()` keeps
-  tests off the real keychain.
+- **Native multi-provider** [DONE]: OpenAI, Anthropic, and Ollama implement
+  the shared streaming client surface, with provider-aware routing, images,
+  files, system prompts, usage, effort, and one-shot support.
+- **Key manager (OpenAI + Anthropic keys)** [DONE]: provider credentials use
+  separate OS-keychain accounts, environment overrides remain supported,
+  and picker ctrl+k opens the two-row add/remove manager.
 
 ## Infra & distribution
 

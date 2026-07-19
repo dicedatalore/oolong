@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/zalando/go-keyring"
 
+	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
 )
@@ -59,8 +60,8 @@ func TestDefaultModelsAppearOnlyForRelevantKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.refreshBuiltinCatalog()
-	if got := len(model.picker.Items()); got != 0 {
-		t.Errorf("Anthropic key exposed %d OpenAI defaults", got)
+	if got, want := len(model.picker.Items()), builtinProviderCount("anthropic"); got != want {
+		t.Errorf("Anthropic key exposed %d defaults, want %d Anthropic defaults", got, want)
 	}
 	if err := keystore.Set(keystore.OpenAI, "sk-test"); err != nil {
 		t.Fatal(err)
@@ -69,6 +70,27 @@ func TestDefaultModelsAppearOnlyForRelevantKey(t *testing.T) {
 	if got := len(model.picker.Items()); got != len(config.Builtin) {
 		t.Errorf("OpenAI key exposed %d defaults, want %d", got, len(config.Builtin))
 	}
+}
+
+func TestAnthropicModelUsesAnthropicClient(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	cfg := config.Config{Models: []config.Model{{ID: "claude-test", Provider: "anthropic"}}}
+	model := New(nil, "dark", cfg, "")
+	if _, ok := model.clientFor("claude-test").(*provideranthropic.Client); !ok {
+		t.Error("Anthropic model was not routed to the Anthropic client")
+	}
+}
+
+func builtinProviderCount(provider string) int {
+	count := 0
+	for _, model := range config.Builtin {
+		if model.Provider == provider {
+			count++
+		}
+	}
+	return count
 }
 
 func TestKeyManagerRejectsEmptyKey(t *testing.T) {
@@ -125,5 +147,15 @@ func TestAnthropicKeySavedOnlyToKeychainAndInputCleared(t *testing.T) {
 	}
 	if am.state != stateKeyManager {
 		t.Error("saving a key unexpectedly closed the manager")
+	}
+}
+
+func TestAnthropicKeyStartsValidation(t *testing.T) {
+	model := newKeyManagerModel(t)
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	model = typeText(model, "sk-ant-test")
+	model, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !model.(Model).keyValidating || cmd == nil {
+		t.Error("Anthropic key did not start asynchronous validation")
 	}
 }

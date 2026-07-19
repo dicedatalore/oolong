@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
+	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
@@ -104,10 +105,14 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.keyNotice = fmt.Sprintf("%s key deleted", providerName(m.keyProvider))
 			}
-			if m.keyProvider == keystore.OpenAI && keystore.Resolve(keystore.OpenAI) == "" {
-				m.client = nil
-				m.clients = nil
+			globalProvider := m.provider
+			if globalProvider == "" {
+				globalProvider = "openai"
 			}
+			if string(m.keyProvider) == globalProvider && keystore.Resolve(m.keyProvider) == "" {
+				m.client = nil
+			}
+			m.clients = nil
 			m.refreshKeyStatuses()
 			m.refreshBuiltinCatalog()
 			return m, nil
@@ -118,13 +123,15 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.keyErr = ""
+			m.keyValidating = true
 			if m.keyProvider == keystore.OpenAI {
-				m.keyValidating = true
 				return m, tea.Batch(m.spin.Tick, func() tea.Msg {
 					return keyCheckMsg{provider: keystore.OpenAI, key: keyValue, err: openai.ValidateKey(keyValue)}
 				})
 			}
-			return m, func() tea.Msg { return keyCheckMsg{provider: keystore.Anthropic, key: keyValue} }
+			return m, tea.Batch(m.spin.Tick, func() tea.Msg {
+				return keyCheckMsg{provider: keystore.Anthropic, key: keyValue, err: provideranthropic.ValidateKey(keyValue)}
+			})
 		}
 	}
 
@@ -152,11 +159,17 @@ func (m Model) handleKeyCheck(msg keyCheckMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.provider == keystore.OpenAI {
 		m.openAIKeyInput.SetValue("")
-		m.client = m.newClient(msg.key)
-		m.clients = nil
 	} else {
 		m.anthropicKeyInput.SetValue("")
 	}
+	globalProvider := m.provider
+	if globalProvider == "" {
+		globalProvider = "openai"
+	}
+	if string(msg.provider) == globalProvider {
+		m.client = m.newClient(msg.key)
+	}
+	m.clients = nil
 	m.refreshKeyStatuses()
 	m.refreshBuiltinCatalog()
 	m.keyNotice = fmt.Sprintf("%s key saved to OS keychain", providerName(msg.provider))
@@ -198,7 +211,7 @@ func (m Model) viewKeyManager() string {
 		m.keyRow(keystore.Anthropic, m.anthropicKeyInput)
 	bottom := helpStyle.Render("tab/↑/↓: select • enter: validate/save • ctrl+d: delete • esc: back")
 	if m.keyValidating {
-		bottom = m.spin.View() + helpStyle.Render("validating OpenAI key…")
+		bottom = m.spin.View() + helpStyle.Render("validating "+providerName(m.keyProvider)+" key…")
 	} else if m.keyErr != "" {
 		bottom = errorStyle.Render(m.keyErr)
 	}

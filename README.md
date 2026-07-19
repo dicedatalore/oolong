@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/dicedatalore/oolong/actions/workflows/ci.yml/badge.svg)](https://github.com/dicedatalore/oolong/actions/workflows/ci.yml)
 
-**Simple ephemeral chat** — a fast, keyboard-driven terminal client for OpenAI models, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+**Simple ephemeral chat** — a fast, keyboard-driven terminal client for OpenAI, Anthropic, and Ollama models, built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 - **Ephemeral by design** — conversations live in your terminal and nowhere else. Nothing is written to disk unless you save a transcript, and OpenAI's server-side response storage is switched off. Close the window and the chat is gone.
 - **Any OpenAI-compatible endpoint** — the official API works out of the box, or point `base_url` at Ollama, LM Studio, or OpenRouter and give local models the same polished UI.
@@ -20,6 +20,7 @@
 - **File attachments** — `ctrl+f` picks an image or text file from disk to send with your next message
 - **One-shot mode** — `oolong "question"` (or `cat main.go | oolong "explain"`) streams the answer to stdout with no TUI, so Oolong works in scripts and pipelines
 - **OpenAI-compatible endpoints** — point `base_url` at Ollama, LM Studio, OpenRouter, or any compatible server, globally or per model
+- **Native Anthropic support** — stream Claude models through Anthropic's Messages API with text, images, files, system prompts, effort, and usage reporting
 - **Context meter** — the chat header tracks how much of the model's context window the conversation fills, and warns as it nears the limit
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
 - **Transcript export & resume** — `ctrl+s` saves the conversation as a timestamped markdown file; `oolong --resume <file>` picks it back up later
@@ -93,6 +94,15 @@ verbosity = "low"            # low | medium | high
 context_window = 400000      # tokens; shows a ctx meter in the chat header
 
 [[models]]
+id = "claude-sonnet-5"
+provider = "anthropic"
+description = "Anthropic Claude Sonnet"
+input_rate = 2.00
+output_rate = 10.00
+reasoning_effort = "medium"
+context_window = 1000000
+
+[[models]]
 id = "gemma3"
 provider = "ollama"
 description = "Local Gemma through Ollama"
@@ -101,13 +111,13 @@ base_url = "http://localhost:11434"
 
 For a single run, `oolong --model <id>` opens a chat directly with any model your key can access, overriding `default_model`.
 
-`reasoning_effort` and `verbosity` set the model's default [Responses API](https://platform.openai.com/docs/api-reference/responses) parameters. They're passed through as-is — the supported values vary by model generation, and the API reports clearly if a model rejects one. On the model picker, `←`/`→` adjust the selected model's effort for the session, shown in the list item and later in the chat header. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
+`reasoning_effort` sets the provider's effort parameter; `verbosity` applies to OpenAI's Responses API. Values are passed through because support varies by model generation. On the model picker, `←`/`→` adjust effort for the session. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
 
 ### OpenAI-compatible endpoints
 
-`base_url` points Oolong at any server that speaks the OpenAI API — Ollama, LM Studio, OpenRouter, and friends. Set it globally, or per model to mix endpoints in one catalog. Local endpoints need no API key; on custom endpoints Oolong skips the OpenAI-specific key validation and model availability check. The `OPENAI_BASE_URL` environment variable overrides every configured endpoint.
+`base_url` points Oolong at a provider endpoint. Set it globally, or per model to mix endpoints in one catalog. Local OpenAI-compatible endpoints need no API key; Oolong skips OpenAI-specific validation for those routes. `OPENAI_BASE_URL` overrides configured OpenAI endpoints only.
 
-Set `provider = "openai"` for OpenAI and compatible endpoints, or `provider = "ollama"` for Ollama's native API. Provider selection can be global or per model, so one catalog can contain both. Ollama remains opt-in; an empty config still uses Oolong's built-in OpenAI catalog. Both `http://localhost:11434` and its `/v1` form are accepted for Ollama.
+Set `provider = "openai"`, `provider = "anthropic"`, or `provider = "ollama"`. Provider selection can be global or per model, so one catalog can contain all three. Both `http://localhost:11434` and its `/v1` form are accepted for Ollama.
 
 ## Scripting
 

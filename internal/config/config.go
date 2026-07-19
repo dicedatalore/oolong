@@ -28,8 +28,8 @@ type Model struct {
 	OutputRate      float64 `toml:"output_rate"`
 	ReasoningEffort string  `toml:"reasoning_effort"`
 	Verbosity       string  `toml:"verbosity"`
-	BaseURL         string  `toml:"base_url"`       // per-model OpenAI-compatible endpoint
-	Provider        string  `toml:"provider"`       // "openai" or "ollama"
+	BaseURL         string  `toml:"base_url"`       // optional per-model provider endpoint
+	Provider        string  `toml:"provider"`       // "openai", "anthropic", or "ollama"
 	ContextWindow   int     `toml:"context_window"` // tokens; enables the ctx meter in the chat header
 }
 
@@ -37,18 +37,22 @@ type Config struct {
 	DefaultModel  string  `toml:"default_model"`  // skip the picker on launch when set
 	TranscriptDir string  `toml:"transcript_dir"` // OOLONG_TRANSCRIPT_DIR env var still wins
 	Accent        string  `toml:"accent"`         // primary accent color, "#RRGGBB"
-	BaseURL       string  `toml:"base_url"`       // OpenAI-compatible endpoint for every model
-	Provider      string  `toml:"provider"`       // "openai" or "ollama"; blank preserves OpenAI default
+	BaseURL       string  `toml:"base_url"`       // optional provider endpoint for every model
+	Provider      string  `toml:"provider"`       // blank preserves the OpenAI default
 	Models        []Model `toml:"models"`         // replaces the built-in catalog when present
 }
 
 // Builtin is the model catalog compiled into Oolong, used when the config
 // file does not provide its own [[models]] catalog.
-// Rates per https://openai.com/api/pricing.
+// Rates per the providers' published API pricing.
 var Builtin = []Model{
 	{ID: "gpt-5.6-luna", Provider: "openai", Description: "For cost-sensitive workloads", InputRate: 1.00, OutputRate: 6.00, ContextWindow: 400_000},
 	{ID: "gpt-5.6-terra", Provider: "openai", Description: "Balances intelligence and cost", InputRate: 2.50, OutputRate: 15.00, ContextWindow: 400_000},
 	{ID: "gpt-5.6-sol", Provider: "openai", Description: "For complex professional work", InputRate: 5.00, OutputRate: 30.00, ContextWindow: 400_000},
+	{ID: "claude-haiku-4-5", Provider: "anthropic", Description: "Fastest Claude model", InputRate: 1.00, OutputRate: 5.00, ContextWindow: 200_000},
+	{ID: "claude-sonnet-5", Provider: "anthropic", Description: "Frontier intelligence at scale", InputRate: 2.00, OutputRate: 10.00, ContextWindow: 1_000_000},
+	{ID: "claude-opus-4-8", Provider: "anthropic", Description: "Complex reasoning and agentic coding", InputRate: 5.00, OutputRate: 25.00, ContextWindow: 1_000_000},
+	{ID: "claude-fable-5", Provider: "anthropic", Description: "Most capable widely released Claude model", InputRate: 10.00, OutputRate: 50.00, ContextWindow: 1_000_000},
 }
 
 // OfficialBaseURL is the endpoint the OpenAI SDK talks to by default.
@@ -79,11 +83,15 @@ func (c Config) CustomCatalog() bool { return len(c.Models) > 0 }
 // an OpenAI key. This lets a catalog containing only per-model local routes
 // reach the picker instead of being stopped by first-run key entry.
 func (c Config) HasCustomEndpoint() bool {
-	if CustomEndpoint(c.BaseURL) {
+	if c.Provider != "anthropic" && CustomEndpoint(c.BaseURL) {
 		return true
 	}
 	for _, m := range c.Models {
-		if CustomEndpoint(m.BaseURL) {
+		provider := m.Provider
+		if provider == "" {
+			provider = c.Provider
+		}
+		if provider != "anthropic" && CustomEndpoint(m.BaseURL) {
 			return true
 		}
 	}
@@ -162,6 +170,11 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 # provider = "ollama"
 # description = "Local Gemma through Ollama"
 # base_url = "http://localhost:11434"
+#
+# [[models]]
+# id = "claude-sonnet-5"
+# provider = "anthropic"
+# description = "Anthropic Claude Sonnet"
 `
 
 // Init writes the scaffold config file and returns its path. An existing
@@ -214,7 +227,7 @@ func parse(data string) (Config, error) {
 		drop("base_url %q is not an http(s) URL", c.BaseURL)
 		c.BaseURL = ""
 	}
-	if c.Provider != "" && c.Provider != "openai" && c.Provider != "ollama" {
+	if c.Provider != "" && c.Provider != "openai" && c.Provider != "anthropic" && c.Provider != "ollama" {
 		drop("provider %q is not supported", c.Provider)
 		c.Provider = ""
 	}
@@ -235,7 +248,7 @@ func parse(data string) (Config, error) {
 			drop("model %s base_url %q is not an http(s) URL", m.ID, m.BaseURL)
 			m.BaseURL = ""
 		}
-		if m.Provider != "" && m.Provider != "openai" && m.Provider != "ollama" {
+		if m.Provider != "" && m.Provider != "openai" && m.Provider != "anthropic" && m.Provider != "ollama" {
 			drop("model %s provider %q is not supported", m.ID, m.Provider)
 			m.Provider = ""
 		}

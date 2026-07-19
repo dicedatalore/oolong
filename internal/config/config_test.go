@@ -203,6 +203,20 @@ provider = "ollama"
 			},
 		},
 		{
+			name: "anthropic provider can be explicit",
+			data: `
+[[models]]
+id = "claude-sonnet-5"
+provider = "anthropic"
+`,
+			check: func(c Config) string {
+				if c.Models[0].Provider != "anthropic" {
+					return "explicit Anthropic provider not parsed"
+				}
+				return ""
+			},
+		},
+		{
 			name:    "bad global base_url dropped",
 			data:    `base_url = "localhost:11434"`,
 			wantErr: `base_url "localhost:11434"`,
@@ -316,6 +330,20 @@ func TestHasCustomEndpointIncludesPerModelRoutes(t *testing.T) {
 	}
 	if (Config{}).HasCustomEndpoint() {
 		t.Error("default config reports a custom endpoint")
+	}
+}
+
+func TestAnthropicEndpointStillRequiresAKey(t *testing.T) {
+	c := Config{Models: []Model{{ID: "claude-test", Provider: "anthropic", BaseURL: "https://api.anthropic.com"}}}
+	if c.HasCustomEndpoint() {
+		t.Error("Anthropic endpoint was treated as a keyless custom route")
+	}
+}
+
+func TestAnthropicGlobalProviderAppliesToModelEndpoints(t *testing.T) {
+	c := Config{Provider: "anthropic", Models: []Model{{ID: "claude-test", BaseURL: "https://api.anthropic.com"}}}
+	if c.HasCustomEndpoint() {
+		t.Error("inherited Anthropic endpoint was treated as keyless")
 	}
 }
 

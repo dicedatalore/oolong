@@ -246,9 +246,16 @@ func (m Model) handleModelsCheck(msg modelsCheckMsg) (tea.Model, tea.Cmd) {
 	kept := make([]config.Model, 0, len(pending))
 	var dropped []string
 	for _, cm := range pending {
-		// A model with its own base_url lives on another endpoint; the
-		// OpenAI model list says nothing about it.
-		if cm.BaseURL != "" || msg.available[cm.ID] {
+		provider := cm.Provider
+		if provider == "" {
+			provider = m.provider
+		}
+		if provider == "" {
+			provider = "openai"
+		}
+		// Other providers and per-model endpoints are outside the scope of
+		// the official OpenAI model list and must survive this check.
+		if provider != "openai" || cm.BaseURL != "" || msg.available[cm.ID] {
 			kept = append(kept, cm)
 		} else {
 			dropped = append(dropped, cm.ID)

@@ -39,6 +39,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
+	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/ollama"
@@ -174,7 +175,8 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 		recallIdx:         -1,
 	}
 	m.initCmd = sparkleTick(0)
-	if cfg.CustomCatalog() && !config.CustomEndpoint(cfg.BaseURL) {
+	openAIClient, canCheckOpenAI := client.(*openai.Client)
+	if cfg.CustomCatalog() && !config.CustomEndpoint(cfg.BaseURL) && canCheckOpenAI {
 		// Config-supplied models show in the picker only once the API
 		// confirms they exist; the check starts now, or from handleKeyCheck
 		// when key entry has to supply the client first. The catalog itself
@@ -185,10 +187,8 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 		m.pendingCatalog = cfg.Catalog()
 		m.catalog = m.pendingCatalog
 		m.rates = ratesFrom(m.pendingCatalog)
-		if client, ok := client.(*openai.Client); ok {
-			m.keyNotice = "checking model availability…"
-			m.initCmd = tea.Batch(m.initCmd, checkModels(client))
-		}
+		m.keyNotice = "checking model availability…"
+		m.initCmd = tea.Batch(m.initCmd, checkModels(openAIClient))
 	} else {
 		if cfg.CustomCatalog() {
 			m.setCatalog(cfg.Catalog())
@@ -197,7 +197,7 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 			m.refreshBuiltinCatalog()
 		}
 	}
-	if cfg.DefaultModel != "" && client != nil {
+	if cfg.DefaultModel != "" && m.clientFor(cfg.DefaultModel) != nil {
 		// Skip the picker, but only once the first WindowSizeMsg supplies
 		// real dimensions — opening the chat now would lay out at zero size.
 		m.pendingModel = cfg.DefaultModel
@@ -217,6 +217,12 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 // newClient builds a client for the global endpoint with the given key,
 // honoring a config base_url. Used when key entry replaces the client.
 func (m Model) newClient(key string) openai.ChatClient {
+	if m.provider == "anthropic" {
+		if m.baseURL != "" {
+			return provideranthropic.New(key, provideranthropic.WithBaseURL(m.baseURL))
+		}
+		return provideranthropic.New(key)
+	}
 	if m.provider == "ollama" {
 		return ollama.New(m.baseURL)
 	}
@@ -251,10 +257,25 @@ func (m *Model) clientFor(id string) openai.ChatClient {
 		m.clients = make(map[string]openai.ChatClient)
 	}
 	var c openai.ChatClient
-	if provider == "ollama" {
+	if provider == "anthropic" {
+		key := keystore.Resolve(keystore.Anthropic)
+		if key == "" {
+			return nil
+		}
+		if url != "" {
+			c = provideranthropic.New(key, provideranthropic.WithBaseURL(url))
+		} else {
+			c = provideranthropic.New(key)
+		}
+	} else if provider == "ollama" {
 		c = ollama.New(url)
 	} else {
-		c = openai.New(keystore.Resolve(keystore.OpenAI), openai.WithBaseURL(url))
+		key := keystore.Resolve(keystore.OpenAI)
+		if url != "" {
+			c = openai.New(key, openai.WithBaseURL(url))
+		} else {
+			c = openai.New(key)
+		}
 	}
 	m.clients[cacheKey] = c
 	return c
