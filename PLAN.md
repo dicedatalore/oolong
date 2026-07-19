@@ -57,12 +57,16 @@ Now/Next/Later is priority, not versions.
 
 ## Infra & distribution
 
-- **E2E pty smoke test in CI**: the verify skill already documents the whole
-  driver (OSC/DSR replies, winsize, fake `/v1/responses` SSE server);
-  automate one happy-path flow.
+- **E2E pty smoke test in CI** [DONE]: `e2e/smoke.sh` drives the happy path
+  (picker → send → save → quit, plus one-shot pipe mode) on a pty against
+  `e2e/fakeapi`; the `e2e` job in ci.yml runs it on every push/PR.
+- **GIF update pipeline** [DONE]: `demo/record.sh` records `demo/demo.tape`
+  via Charm VHS against the fake API (canned `demo/reply.md`, no key);
+  `.github/workflows/demo.yml` re-records on tape changes or manual dispatch
+  and auto-commits the GIF (`chore:` — never cuts a release).
 - **macOS signing + notarization** — removes the cask's quarantine-stripping
-  hook.
-- **More channels**: Homebrew formula (Linux), winget.
+  hook. Needs an Apple Developer ID cert + notary API key as repo secrets;
+  goreleaser's quill-based `notarize.macos` is the intended mechanism.
 
 ## Standing decisions
 
@@ -85,3 +89,4 @@ Now/Next/Later is priority, not versions.
 - **In-chat search** through the transcript.
 - **Inline image preview** for pasted attachments via the kitty/iTerm2
   graphics protocols, where supported.
+- **More channels**: Homebrew formula (Linux), winget.

@@ -27,3 +27,18 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+
+  # One happy-path TUI flow (plus one-shot pipe mode) driven on a real pty
+  # against the fake API in e2e/ — catches breakage the unit tests can't,
+  # like the terminal-query handshake or key routing.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # golang.design/x/clipboard needs the X11 headers on Linux.
+      - name: Install X11 headers
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev
+      - run: ./e2e/smoke.sh
