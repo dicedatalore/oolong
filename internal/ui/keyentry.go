@@ -97,7 +97,9 @@ func (m Model) handleKeyCheck(msg keyCheckMsg) (tea.Model, tea.Cmd) {
 	if m.pendingCatalog != nil {
 		// A custom catalog was waiting on this client for its
 		// availability check (see New).
-		cmd = tea.Batch(cmd, checkModels(m.client))
+		if client, ok := m.client.(*openai.Client); ok {
+			cmd = tea.Batch(cmd, checkModels(client))
+		}
 	}
 	return m, cmd
 }

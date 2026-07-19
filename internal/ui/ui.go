@@ -41,6 +41,7 @@ import (
 
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
@@ -69,10 +70,11 @@ type Model struct {
 	pendingModel   string         // default_model to open once the first resize arrives
 	transcriptDir  string         // transcript_dir from config; the env var wins
 	baseURL        string         // global base_url from config; blank when the env var overrides
+	provider       string         // global endpoint protocol; blank means OpenAI
 
 	// clients for models with their own base_url, keyed by endpoint and
 	// built on first use; m.client serves the global endpoint.
-	clients map[string]*openai.Client
+	clients map[string]openai.ChatClient
 
 	// model picker
 	picker list.Model
@@ -135,7 +137,7 @@ type Model struct {
 	keyValidating bool
 
 	mdStyle    string // glamour style name matching the terminal background
-	client     *openai.Client
+	client     openai.ChatClient
 	logo       string
 	sparkleTag int
 	initCmd    tea.Cmd // startup command, returned by Init
@@ -144,7 +146,7 @@ type Model struct {
 // New builds the initial model. A nil client (no stored API key yet) starts
 // the app on the key entry screen instead of the picker. cfgErr is a config
 // load problem to surface as a notice — a bad config never blocks launch.
-func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string) Model {
+func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr string) Model {
 	if cfg.Accent != "" {
 		// Before the widgets below copy the accent into their own styles.
 		applyAccent(cfg.Accent)
@@ -162,6 +164,7 @@ func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string
 		logo:          renderLogoHeader(),
 		transcriptDir: cfg.TranscriptDir,
 		baseURL:       cfg.BaseURL,
+		provider:      cfg.Provider,
 		recallIdx:     -1,
 	}
 	m.initCmd = sparkleTick(0)
@@ -177,7 +180,7 @@ func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string
 		m.catalog = m.pendingCatalog
 		m.rates = ratesFrom(m.pendingCatalog)
 		m.keyNotice = "checking model availability…"
-		if client != nil {
+		if client, ok := client.(*openai.Client); ok {
 			m.initCmd = tea.Batch(m.initCmd, checkModels(client))
 		}
 	} else {
@@ -203,7 +206,10 @@ func New(client *openai.Client, mdStyle string, cfg config.Config, cfgErr string
 
 // newClient builds a client for the global endpoint with the given key,
 // honoring a config base_url. Used when key entry replaces the client.
-func (m Model) newClient(key string) *openai.Client {
+func (m Model) newClient(key string) openai.ChatClient {
+	if m.provider == "ollama" {
+		return ollama.New(m.baseURL)
+	}
 	if m.baseURL != "" {
 		return openai.New(key, openai.WithBaseURL(m.baseURL))
 	}
@@ -213,19 +219,34 @@ func (m Model) newClient(key string) *openai.Client {
 // clientFor returns the client to talk to a model with: the default client,
 // unless the model's catalog entry names its own base_url, in which case a
 // client for that endpoint is built (once) with the same key.
-func (m *Model) clientFor(id string) *openai.Client {
-	url := m.modelConfig(id).BaseURL
-	if url == "" || url == m.baseURL {
+func (m *Model) clientFor(id string) openai.ChatClient {
+	cm := m.modelConfig(id)
+	url := cm.BaseURL
+	globalProvider := m.provider
+	if globalProvider == "" {
+		globalProvider = "openai"
+	}
+	provider := cm.Provider
+	if provider == "" {
+		provider = globalProvider
+	}
+	if (url == "" || url == m.baseURL) && provider == globalProvider {
 		return m.client
 	}
-	if c, ok := m.clients[url]; ok {
+	cacheKey := provider + "\x00" + url
+	if c, ok := m.clients[cacheKey]; ok {
 		return c
 	}
 	if m.clients == nil {
-		m.clients = make(map[string]*openai.Client)
+		m.clients = make(map[string]openai.ChatClient)
 	}
-	c := openai.New(keystore.Resolve(), openai.WithBaseURL(url))
-	m.clients[url] = c
+	var c openai.ChatClient
+	if provider == "ollama" {
+		c = ollama.New(url)
+	} else {
+		c = openai.New(keystore.Resolve(), openai.WithBaseURL(url))
+	}
+	m.clients[cacheKey] = c
 	return c
 }
 

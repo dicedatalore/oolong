@@ -12,6 +12,7 @@ import (
 
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/oneshot"
 	"github.com/dicedatalore/oolong/internal/openai"
 	"github.com/dicedatalore/oolong/internal/ui"
@@ -73,8 +74,10 @@ Flags:
 		// so a driver pointing at a fake server still exercises them. The
 		// SDK picks the env var up on its own.
 		cfg.BaseURL = ""
+		cfg.Provider = ""
 		for i := range cfg.Models {
 			cfg.Models[i].BaseURL = ""
+			cfg.Models[i].Provider = ""
 		}
 	}
 	if *model != "" {
@@ -110,9 +113,11 @@ Flags:
 
 	// A custom endpoint launches even without a key: local servers
 	// (Ollama, LM Studio) don't use one.
-	var client *openai.Client
-	if key := keystore.Resolve(); key != "" || config.CustomEndpoint(cfg.BaseURL) {
-		if cfg.BaseURL != "" {
+	var client openai.ChatClient
+	if key := keystore.Resolve(); key != "" || cfg.HasCustomEndpoint() {
+		if cfg.Provider == "ollama" {
+			client = ollama.New(cfg.BaseURL)
+		} else if cfg.BaseURL != "" {
 			client = openai.New(key, openai.WithBaseURL(cfg.BaseURL))
 		} else {
 			client = openai.New(key)

@@ -76,20 +76,27 @@ Oolong is fully usable with no configuration. To customize it, run `oolong confi
 default_model = "gpt-5.6-terra"   # skip the picker on launch
 transcript_dir = "~/notes/chats"  # OOLONG_TRANSCRIPT_DIR still wins
 accent = "#FFAF87"                # primary accent color
-# base_url = "http://localhost:11434/v1"  # any OpenAI-compatible endpoint
+# base_url = "https://api.openai.com/v1"
+# provider = "openai"
 
 # Replaces the built-in model catalog when present. Any model your API key
 # can access works — entries are checked against the API and unavailable
 # ones are hidden from the picker.
 [[models]]
 id = "gpt-5.4"
+provider = "openai"
 description = "Previous generation"
 input_rate = 1.25    # USD per 1M tokens, both optional
 output_rate = 10.00
 reasoning_effort = "medium"  # gpt-5.6 takes none | low | medium | high | xhigh
 verbosity = "low"            # low | medium | high
 context_window = 400000      # tokens; shows a ctx meter in the chat header
-# base_url = ""              # per-model endpoint, overrides the global one
+
+[[models]]
+id = "gemma3"
+provider = "ollama"
+description = "Local Gemma through Ollama"
+base_url = "http://localhost:11434"
 ```
 
 For a single run, `oolong --model <id>` opens a chat directly with any model your key can access, overriding `default_model`.
@@ -99,6 +106,8 @@ For a single run, `oolong --model <id>` opens a chat directly with any model you
 ### OpenAI-compatible endpoints
 
 `base_url` points Oolong at any server that speaks the OpenAI API — Ollama, LM Studio, OpenRouter, and friends. Set it globally, or per model to mix endpoints in one catalog. Local endpoints need no API key; on custom endpoints Oolong skips the OpenAI-specific key validation and model availability check. The `OPENAI_BASE_URL` environment variable overrides every configured endpoint.
+
+Set `provider = "openai"` for OpenAI and compatible endpoints, or `provider = "ollama"` for Ollama's native API. Provider selection can be global or per model, so one catalog can contain both. Ollama remains opt-in; an empty config still uses Oolong's built-in OpenAI catalog. Both `http://localhost:11434` and its `/v1` form are accepted for Ollama.
 
 ## Scripting
 

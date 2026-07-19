@@ -15,6 +15,7 @@ import (
 
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
@@ -41,8 +42,12 @@ func Run(cfg config.Config, prompt, stdin string, out io.Writer) int {
 		}
 	}
 	endpoint := cm.BaseURL
+	provider := cm.Provider
 	if endpoint == "" {
 		endpoint = cfg.BaseURL
+	}
+	if provider == "" {
+		provider = cfg.Provider
 	}
 
 	key := keystore.Resolve()
@@ -50,8 +55,10 @@ func Run(cfg config.Config, prompt, stdin string, out io.Writer) int {
 		fmt.Fprintln(os.Stderr, "no API key: run oolong once to store one, or set OPENAI_API_KEY")
 		return 1
 	}
-	var client *openai.Client
-	if endpoint != "" {
+	var client openai.ChatClient
+	if provider == "ollama" {
+		client = ollama.New(endpoint)
+	} else if endpoint != "" {
 		client = openai.New(key, openai.WithBaseURL(endpoint))
 	} else {
 		client = openai.New(key)
