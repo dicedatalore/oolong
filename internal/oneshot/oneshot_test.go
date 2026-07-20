@@ -101,7 +101,7 @@ func TestChooseModelUsesAvailableProviderKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	var want string
-	for _, m := range config.Builtin {
+	for _, m := range config.DefaultModels {
 		if m.Provider == "anthropic" {
 			want = m.ID
 			break
@@ -118,7 +118,7 @@ func TestChooseModelPrefersGoogleWhenOnlyItsKeyIsSet(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "AIza-test")
 	var want string
-	for _, m := range config.Builtin {
+	for _, m := range config.DefaultModels {
 		if m.Provider == "google" {
 			want = m.ID
 			break

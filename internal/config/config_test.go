@@ -24,7 +24,7 @@ func TestParse(t *testing.T) {
 				if c.CustomCatalog() {
 					return "empty config reports a custom catalog"
 				}
-				if len(c.Catalog()) != len(Builtin) {
+				if len(c.Catalog()) != len(DefaultModels) {
 					return "catalog is not the built-in list"
 				}
 				return ""
@@ -71,7 +71,7 @@ verbosity = "low"
 			data:    "default_model = [broken",
 			wantErr: "config:",
 			check: func(c Config) string {
-				if len(c.Catalog()) != len(Builtin) {
+				if len(c.Catalog()) != len(DefaultModels) {
 					return "catalog is not the built-in list after parse error"
 				}
 				return ""

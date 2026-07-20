@@ -32,7 +32,7 @@ type modelRates struct {
 // the picker rows from it, grouped by provider. The catalog starts as the
 // config's (or built-in) list in New and shrinks when the availability check
 // drops models. Grouping copies into a fresh slice, which also keeps the
-// picker's in-place effort edits away from the shared config.Builtin slice.
+// picker's in-place effort edits away from the shared config.DefaultModels slice.
 // In the full view each provider group sits under its own header row; the
 // simple view lists the models bare.
 func (m *Model) setCatalog(models []config.Model) {
@@ -125,8 +125,8 @@ func (m *Model) refreshBuiltinCatalog() {
 	if !m.builtinCatalog {
 		return
 	}
-	models := make([]config.Model, 0, len(config.Builtin))
-	for _, model := range config.Builtin {
+	models := make([]config.Model, 0, len(config.DefaultModels))
+	for _, model := range config.DefaultModels {
 		provider := model.Provider
 		if provider == "" {
 			provider = "openai"

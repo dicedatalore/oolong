@@ -78,8 +78,8 @@ func TestDefaultModelsAppearOnlyForRelevantKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.refreshBuiltinCatalog()
-	if got := len(pickerModels(model)); got != len(config.Builtin) {
-		t.Errorf("Google key exposed %d defaults, want all %d", got, len(config.Builtin))
+	if got := len(pickerModels(model)); got != len(config.DefaultModels) {
+		t.Errorf("Google key exposed %d defaults, want all %d", got, len(config.DefaultModels))
 	}
 }
 
@@ -130,7 +130,7 @@ func TestKeyManagerCyclesThreeProviders(t *testing.T) {
 
 func builtinProviderCount(provider string) int {
 	count := 0
-	for _, model := range config.Builtin {
+	for _, model := range config.DefaultModels {
 		if model.Provider == provider {
 			count++
 		}
