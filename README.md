@@ -48,7 +48,8 @@ Works on macOS, Linux, and Windows with Go 1.26+. Clipboard image paste needs cg
 sudo apt install libx11-dev   # Debian/Ubuntu
 ```
 
-Without cgo the build still works; image paste is simply disabled.
+Without cgo the build still works; image paste is disabled, while text copy
+continues to work in terminals that support OSC52.
 
 ### From source
 
@@ -123,7 +124,7 @@ context_window = 128000
 
 For a single run, `oolong --model <id>` opens a chat directly with a configured model, overriding `default_model`.
 
-`provider` selects the client and may be `openai`, `anthropic`, `google`, or `ollama`. It can be set globally or per model; per-model values let one catalog mix providers. A global `base_url` is inherited by models without their own endpoint, while a per-model value overrides it.
+`provider` selects the client and may be `openai`, `anthropic`, `google`, or `ollama`. It can be set globally or per model; per-model values let one catalog mix providers. A global `base_url` is inherited by models using the global provider, while a per-model value overrides it. Models selecting another provider use that provider's official endpoint unless they set their own `base_url`.
 
 `reasoning_effort` sets the provider's effort parameter; `verbosity` applies only to OpenAI's Responses API. Values are passed through because support varies by model generation. On the model picker, `←`/`→` adjust effort for the session. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
 
@@ -161,7 +162,11 @@ Transcripts saved with `ctrl+s` can be picked back up later:
 oolong --resume oolong-chat-2026-07-19-094035.md
 ```
 
-The conversation, system prompt, and model are restored from the file (image and file attachments are recorded only as labels, so they don't ride along). Nothing is ever loaded implicitly — resume only reads a file you name.
+The conversation, system prompt, model, and attachments are restored from a
+versioned metadata block in the Markdown file. Nothing is ever loaded
+implicitly — resume only reads a file you name. Because saved transcripts are
+lossless, their metadata contains the contents of attached files and images;
+treat transcript files as private data.
 
 ## Keybindings
 
@@ -203,7 +208,7 @@ The mouse wheel scrolls the conversation too; hold `shift` while dragging to sel
 go test ./...
 ```
 
-The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live in `internal/openai`, `internal/anthropic`, `internal/google`, and `internal/ollama`; supporting packages handle one-shot mode, configuration, keychain access, math formatting, and clipboard integration.
+The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live in `internal/openai`, `internal/anthropic`, `internal/google`, and `internal/ollama`; `internal/provider` is the shared route resolver and client factory used by both TUI and one-shot modes. Supporting packages handle configuration, keychain access, math formatting, and clipboard image integration.
 
 Releases are cut automatically on push to `main`: the version bump is derived from [conventional commit](https://www.conventionalcommits.org) messages — `feat:` → minor, `fix:` → patch, a breaking change → major — and commits of other types (`chore:`, `docs:`, `test:`, …) don't trigger a release.
 

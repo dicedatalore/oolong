@@ -46,18 +46,18 @@ func WithBaseURL(url string) option.RequestOption {
 }
 
 type Message struct {
-	Role    string
-	Content string
-	Model   string   // assistant messages: the model that produced the reply
-	Images  [][]byte // image attachments (PNG/JPEG/GIF/WebP), user messages only
-	Files   []File   // text-file attachments, user messages only
+	Role    string   `json:"role"`
+	Content string   `json:"content"`
+	Model   string   `json:"model,omitempty"`  // assistant messages: model that produced the reply
+	Images  [][]byte `json:"images,omitempty"` // image attachments, user messages only
+	Files   []File   `json:"files,omitempty"`  // text-file attachments, user messages only
 }
 
 // File is a text file attached to a user message; it is sent to the model
 // as its own content block alongside the message text.
 type File struct {
-	Name string
-	Text string
+	Name string `json:"name"`
+	Text string `json:"text"`
 }
 
 type Usage struct {
@@ -191,20 +191,6 @@ func imageMIME(data []byte) string {
 	return "image/png"
 }
 
-// ListModels returns the ids of the models available to the API key, for
-// checking a user-configured catalog before it is shown in the picker.
-func (c *Client) ListModels(ctx context.Context) (map[string]bool, error) {
-	ids := make(map[string]bool)
-	it := c.api.Models.ListAutoPaging(ctx)
-	for it.Next() {
-		ids[it.Current().ID] = true
-	}
-	if err := it.Err(); err != nil {
-		return nil, apiError(err)
-	}
-	return ids, nil
-}
-
 // apiError reduces the SDK's verbose API error (method, URL, raw body) to
 // just the server's message, which is what the UI shows.
 func apiError(err error) error {
@@ -223,6 +209,13 @@ func apiError(err error) error {
 // it is replaced with a generic error.
 func ValidateKey(key string) error {
 	return validateKey(key)
+}
+
+func ValidateKeyAt(key, baseURL string) error {
+	if baseURL == "" {
+		return ValidateKey(key)
+	}
+	return validateKey(key, option.WithBaseURL(baseURL))
 }
 
 // validateKey accepts SDK options so tests can use a local server. Production

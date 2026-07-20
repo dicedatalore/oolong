@@ -62,7 +62,7 @@ func TestPickerNoticeUsesAccentAndBlankSeparator(t *testing.T) {
 	am := model.(Model)
 	am.keyNotice = "credential notice"
 	view := am.viewPicker()
-	if !strings.Contains(view, noticeStyle.Render("credential notice")) {
+	if !strings.Contains(view, am.theme.notice.Render("credential notice")) {
 		t.Error("picker notice is not rendered with the accent notice style")
 	}
 	plain := ansi.ReplaceAllString(view, "")

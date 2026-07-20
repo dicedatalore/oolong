@@ -1,6 +1,7 @@
 package oneshot
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/dicedatalore/oolong/internal/config"
+	"github.com/dicedatalore/oolong/internal/provider"
 )
 
 func TestCombinePrompt(t *testing.T) {
@@ -47,7 +49,7 @@ func TestOneShotStreamsToWriter(t *testing.T) {
 		Models:       []config.Model{{ID: "local-llama", BaseURL: srv.URL, ReasoningEffort: "low"}},
 	}
 	var out strings.Builder
-	if code := Run(cfg, "explain", "package main\n", &out); code != 0 {
+	if code := Run(context.Background(), provider.NewResolver(cfg), "explain", "package main\n", &out, &out); code != 0 {
 		t.Fatalf("Run() exit code = %d, want 0", code)
 	}
 	// The reply lands on the writer with a trailing newline added.
@@ -85,7 +87,7 @@ func TestOneShotAnthropicProvider(t *testing.T) {
 		Models:       []config.Model{{ID: "claude-test", Provider: "anthropic", BaseURL: srv.URL}},
 	}
 	var out strings.Builder
-	if code := Run(cfg, "hello", "", &out); code != 0 {
+	if code := Run(context.Background(), provider.NewResolver(cfg), "hello", "", &out, &out); code != 0 {
 		t.Fatalf("Run() exit code = %d, want 0", code)
 	}
 	if got := out.String(); got != "Hello Claude\n" {
@@ -107,7 +109,7 @@ func TestChooseModelUsesAvailableProviderKey(t *testing.T) {
 			break
 		}
 	}
-	if got := chooseModel(config.Config{}); got != want {
+	if got := provider.NewResolver(config.Config{}).FirstAvailableModel(); got != want {
 		t.Errorf("chooseModel() = %q, want first Anthropic default %q", got, want)
 	}
 }
@@ -124,7 +126,7 @@ func TestChooseModelPrefersGoogleWhenOnlyItsKeyIsSet(t *testing.T) {
 			break
 		}
 	}
-	if got := chooseModel(config.Config{}); got != want {
+	if got := provider.NewResolver(config.Config{}).FirstAvailableModel(); got != want {
 		t.Errorf("chooseModel() = %q, want first Google default %q", got, want)
 	}
 }
@@ -132,7 +134,7 @@ func TestChooseModelPrefersGoogleWhenOnlyItsKeyIsSet(t *testing.T) {
 func TestOneShotNothingToAsk(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	var out strings.Builder
-	if code := Run(config.Config{}, "", "", &out); code != 2 {
+	if code := Run(context.Background(), provider.NewResolver(config.Config{}), "", "", &out, &out); code != 2 {
 		t.Errorf("exit code = %d, want 2 for an empty prompt", code)
 	}
 }

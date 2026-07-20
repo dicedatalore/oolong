@@ -327,30 +327,6 @@ func TestCustomEndpoint(t *testing.T) {
 	}
 }
 
-func TestHasCustomEndpointIncludesPerModelRoutes(t *testing.T) {
-	c := Config{Models: []Model{{ID: "gemma3", BaseURL: "http://localhost:11434", Provider: "ollama"}}}
-	if !c.HasCustomEndpoint() {
-		t.Error("per-model Ollama route was not detected")
-	}
-	if (Config{}).HasCustomEndpoint() {
-		t.Error("default config reports a custom endpoint")
-	}
-}
-
-func TestAnthropicEndpointStillRequiresAKey(t *testing.T) {
-	c := Config{Models: []Model{{ID: "claude-test", Provider: "anthropic", BaseURL: "https://api.anthropic.com"}}}
-	if c.HasCustomEndpoint() {
-		t.Error("Anthropic endpoint was treated as a keyless custom route")
-	}
-}
-
-func TestAnthropicGlobalProviderAppliesToModelEndpoints(t *testing.T) {
-	c := Config{Provider: "anthropic", Models: []Model{{ID: "claude-test", BaseURL: "https://api.anthropic.com"}}}
-	if c.HasCustomEndpoint() {
-		t.Error("inherited Anthropic endpoint was treated as keyless")
-	}
-}
-
 func TestLoadRespectsXDGConfigHome(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

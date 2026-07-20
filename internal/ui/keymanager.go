@@ -11,10 +11,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
-	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
-	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
-	"github.com/dicedatalore/oolong/internal/openai"
+	providerroute "github.com/dicedatalore/oolong/internal/provider"
 )
 
 // keyProviders is the key manager's row order; tab/↓ and ↑ cycle through it.
@@ -92,8 +90,8 @@ func (m Model) closeKeyManager() (tea.Model, tea.Cmd) {
 	}
 	m.keyErr = ""
 	m.state = statePicker
-	// The old picker tick stopped scheduling when it observed the manager
-	// state. Use a new tag so any stale tick is ignored and start a fresh loop.
+	// The previous picker visit's tick stopped scheduling in this screen. Use
+	// a new tag so a delayed tick cannot revive that old animation loop.
 	m.sparkleTag++
 	return m, sparkleTick(m.sparkleTag)
 }
@@ -125,13 +123,6 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.keyNotice = fmt.Sprintf("%s key deleted", providerName(m.keyProvider))
 			}
-			globalProvider := m.provider
-			if globalProvider == "" {
-				globalProvider = "openai"
-			}
-			if string(m.keyProvider) == globalProvider && keystore.Resolve(m.keyProvider) == "" {
-				m.client = nil
-			}
 			m.clients = nil
 			m.refreshKeyStatuses()
 			m.refreshBuiltinCatalog()
@@ -145,15 +136,9 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.keyErr = ""
 			m.keyValidating = true
 			provider := m.keyProvider
-			validate := openai.ValidateKey
-			switch provider {
-			case keystore.Anthropic:
-				validate = provideranthropic.ValidateKey
-			case keystore.Google:
-				validate = providergoogle.ValidateKey
-			}
 			return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-				return keyCheckMsg{provider: provider, key: keyValue, err: validate(keyValue)}
+				return keyCheckMsg{provider: provider, key: keyValue,
+					err: m.resolver.ValidateKey(providerroute.Name(provider), keyValue)}
 			})
 		}
 	}
@@ -178,26 +163,13 @@ func (m Model) handleKeyCheck(msg keyCheckMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.keyInput(msg.provider).SetValue("")
-	globalProvider := m.provider
-	if globalProvider == "" {
-		globalProvider = "openai"
-	}
-	if string(msg.provider) == globalProvider {
-		m.client = m.newClient(msg.key)
-	}
 	m.clients = nil
 	m.refreshKeyStatuses()
 	m.refreshBuiltinCatalog()
 	m.keyNotice = fmt.Sprintf("%s key saved to OS keychain", providerName(msg.provider))
 	m.keyErr = ""
 
-	var cmd tea.Cmd
-	if msg.provider == keystore.OpenAI && m.pendingCatalog != nil {
-		if client, ok := m.client.(*openai.Client); ok {
-			cmd = checkModels(client)
-		}
-	}
-	return m, cmd
+	return m, nil
 }
 
 func providerName(provider keystore.Provider) string {
@@ -215,27 +187,27 @@ func (m Model) keyRow(provider keystore.Provider, input textinput.Model) string 
 	if m.keyProvider == provider {
 		marker = "› "
 	}
-	label := headerStyle.Render(providerName(provider))
+	label := m.theme.header.Render(providerName(provider))
 	status := m.keyStatuses[provider]
 	if status == "" {
 		status = "not set"
 	}
-	statusText := helpStyle.Render(" (" + status + ")")
-	return marker + label + statusText + "\n" + inputRowStyle.Render(input.View())
+	statusText := m.theme.help.Render(" (" + status + ")")
+	return marker + label + statusText + "\n" + m.theme.inputRow.Render(input.View())
 }
 
 func (m Model) viewKeyManager() string {
-	header := headerBarStyle.Render(headerStyle.Render("API key manager"))
+	header := m.theme.headerBar.Render(m.theme.header.Render("API key manager"))
 	rows := make([]string, 0, len(keyProviders))
 	for _, provider := range keyProviders {
 		rows = append(rows, m.keyRow(provider, *m.keyInput(provider)))
 	}
 	body := strings.Join(rows, "\n\n")
-	bottom := helpStyle.Render("tab/↑/↓: select • enter: validate/save • ctrl+d: delete • esc: back")
+	bottom := m.theme.help.Render("tab/↑/↓: select • enter: validate/save • ctrl+d: delete • esc: back")
 	if m.keyValidating {
-		bottom = m.spin.View() + helpStyle.Render("validating "+providerName(m.keyProvider)+" key…")
+		bottom = m.spin.View() + m.theme.help.Render("validating "+providerName(m.keyProvider)+" key…")
 	} else if m.keyErr != "" {
-		bottom = errorStyle.Render(m.keyErr)
+		bottom = m.theme.err.Render(m.keyErr)
 	}
-	return pageStyle.Render(header + "\n" + body + "\n" + bottomBarStyle.Render(bottom))
+	return m.theme.page.Render(header + "\n" + body + "\n" + m.theme.bottomBar.Render(bottom))
 }

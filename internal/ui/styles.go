@@ -2,74 +2,53 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"strconv"
 
 	"charm.land/lipgloss/v2"
 )
 
-// Colors and lipgloss styles shared across screens. Lipgloss styles are
-// values: methods like Foreground return a modified copy, so deriving one
-// style from another never mutates the original.
-var (
-	// peach is the app's primary accent and purple the secondary; the logo
-	// gradient in logo.go runs between the same two colors.
-	peach    = lipgloss.Color("#FFAF87")
-	peachDim = lipgloss.Color("#C98B69")
-	purple   = lipgloss.Color("#7D56F4")
+// theme contains every color and style derived from configuration. It is a
+// value owned by one Model, so constructing a second UI cannot inherit global
+// style mutations from the first.
+type theme struct {
+	accent, accentDim                            color.Color
+	page, headerBar, header, inputRow, bottomBar lipgloss.Style
+	userLabel, botLabel, userBlock, botBlock     lipgloss.Style
+	help, notice, err                            lipgloss.Style
+	logoFrom, logoTo                             [3]int
+}
 
-	pageStyle = lipgloss.NewStyle().Padding(1, 1)
-
-	// headerBarStyle/headerStyle/bottomBarStyle mirror the list bubble's
-	// default TitleBar/Title/HelpStyle so both pages align.
-	headerBarStyle = lipgloss.NewStyle().Padding(0, 0, 1, 2)
-
-	headerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("235")).
-			Background(peach).
-			Padding(0, 1)
-
-	// No indent: the textarea's own "┃ " prompt lines up under the
-	// conversation blocks' left borders.
-	inputRowStyle  = lipgloss.NewStyle()
-	bottomBarStyle = lipgloss.NewStyle().Padding(1, 0, 0, 2)
-
-	userLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(peach)
-	botLabelStyle  = lipgloss.NewStyle().Bold(true).Foreground(purple)
-	// Both sides of the conversation render in left-bordered blocks that
-	// align flush left: user messages in the primary accent, model
-	// replies in the secondary.
-	userBlockStyle = lipgloss.NewStyle().
-			Border(lipgloss.ThickBorder(), false, false, false, true).
-			BorderForeground(peach).
-			PaddingLeft(1)
-	botBlockStyle = lipgloss.NewStyle().
-			Border(lipgloss.ThickBorder(), false, false, false, true).
-			BorderForeground(purple).
-			PaddingLeft(1)
-	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	noticeStyle = lipgloss.NewStyle().Foreground(peach)
-	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87"))
-)
-
-// applyAccent swaps the primary accent for a configured "#RRGGBB" color,
-// rebuilding the package-level styles derived from it. Must run before New
-// constructs the widgets, which copy the accent into their own styles.
-// The dim variant and the logo gradient start are derived from the new color
-// the same way the defaults relate to the default peach.
-func applyAccent(hex string) {
-	v, err := strconv.ParseUint(hex[1:], 16, 32)
+func newTheme(accent string) theme {
+	if accent == "" {
+		accent = "#FFAF87"
+	}
+	v, err := strconv.ParseUint(accent[1:], 16, 32)
 	if err != nil {
-		return
+		v = 0xFFAF87
+		accent = "#FFAF87"
 	}
 	r, g, b := int(v>>16&0xFF), int(v>>8&0xFF), int(v&0xFF)
-	peach = lipgloss.Color(hex)
-	// 0.79 ≈ the brightness ratio of the default peachDim to peach.
 	dim := func(c int) int { return int(float64(c) * 0.79) }
-	peachDim = lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", dim(r), dim(g), dim(b)))
-	logoFrom = [3]int{r, g, b}
-
-	headerStyle = headerStyle.Background(peach)
-	userLabelStyle = userLabelStyle.Foreground(peach)
-	userBlockStyle = userBlockStyle.BorderForeground(peach)
-	noticeStyle = noticeStyle.Foreground(peach)
+	primary := lipgloss.Color(accent)
+	primaryDim := lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", dim(r), dim(g), dim(b)))
+	secondary := lipgloss.Color("#7D56F4")
+	return theme{
+		accent:    primary,
+		accentDim: primaryDim,
+		page:      lipgloss.NewStyle().Padding(1, 1),
+		headerBar: lipgloss.NewStyle().Padding(0, 0, 1, 2),
+		header:    lipgloss.NewStyle().Foreground(lipgloss.Color("235")).Background(primary).Padding(0, 1),
+		inputRow:  lipgloss.NewStyle(),
+		bottomBar: lipgloss.NewStyle().Padding(1, 0, 0, 2),
+		userLabel: lipgloss.NewStyle().Bold(true).Foreground(primary),
+		botLabel:  lipgloss.NewStyle().Bold(true).Foreground(secondary),
+		userBlock: lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(primary).PaddingLeft(1),
+		botBlock:  lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(secondary).PaddingLeft(1),
+		help:      lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
+		notice:    lipgloss.NewStyle().Foreground(primary),
+		err:       lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")),
+		logoFrom:  [3]int{r, g, b},
+		logoTo:    [3]int{0x7D, 0x56, 0xF4},
+	}
 }

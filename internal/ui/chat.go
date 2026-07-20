@@ -28,7 +28,7 @@ import (
 	"github.com/dicedatalore/oolong/internal/openai"
 )
 
-func newChatInput() textarea.Model {
+func newChatInput(theme theme) textarea.Model {
 	input := textarea.New()
 	input.Placeholder = "Send a message…"
 	input.CharLimit = 0
@@ -47,8 +47,8 @@ func newChatInput() textarea.Model {
 	// the view. Drop it so the input row matches the surrounding bg.
 	inputStyles := input.Styles()
 	inputStyles.Focused.CursorLine = inputStyles.Focused.CursorLine.Background(lipgloss.NoColor{})
-	inputStyles.Focused.Prompt = inputStyles.Focused.Prompt.Foreground(peach)
-	inputStyles.Cursor.Color = peach
+	inputStyles.Focused.Prompt = inputStyles.Focused.Prompt.Foreground(theme.accent)
+	inputStyles.Cursor.Color = theme.accent
 	input.SetStyles(inputStyles)
 	return input
 }
@@ -97,13 +97,13 @@ func (m Model) msgWidth() int {
 // the markdown renderer for the new width. Called whenever the window,
 // input height, or the rows around the input change.
 func (m *Model) layoutChat() {
-	contentWidth := m.width - pageStyle.GetHorizontalFrameSize()
-	contentHeight := m.height - pageStyle.GetVerticalFrameSize()
-	headerHeight := 1 + headerBarStyle.GetVerticalFrameSize()
+	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
+	contentHeight := m.height - m.theme.page.GetVerticalFrameSize()
+	headerHeight := 1 + m.theme.headerBar.GetVerticalFrameSize()
 	// Size the input before reading its height: with DynamicHeight the
 	// textarea only recomputes its height when its width is set, so the
 	// stale default would leak into the viewport size below.
-	m.input.SetWidth(contentWidth - inputRowStyle.GetHorizontalFrameSize() - 4)
+	m.input.SetWidth(contentWidth - m.theme.inputRow.GetHorizontalFrameSize() - 4)
 	inputHeight := m.input.Height()
 	if len(m.pendingImages) > 0 || len(m.pendingFiles) > 0 {
 		inputHeight++ // attachment indicator line above the input
@@ -111,12 +111,12 @@ func (m *Model) layoutChat() {
 	if m.editingSystem {
 		inputHeight++ // system prompt indicator line above the input
 	}
-	m.help.SetWidth(contentWidth - bottomBarStyle.GetHorizontalFrameSize())
+	m.help.SetWidth(contentWidth - m.theme.bottomBar.GetHorizontalFrameSize())
 	helpHeight := 1
 	if m.help.ShowAll {
 		helpHeight = lipgloss.Height(m.help.View(m.keys))
 	}
-	bottomBarHeight := helpHeight + bottomBarStyle.GetVerticalFrameSize()
+	bottomBarHeight := helpHeight + m.theme.bottomBar.GetVerticalFrameSize()
 	m.vp.SetWidth(contentWidth)
 	m.vp.SetHeight(contentHeight - headerHeight - inputHeight - bottomBarHeight)
 
@@ -158,7 +158,7 @@ func (m *Model) layoutChat() {
 // constant instead of growing with the transcript.
 func (m *Model) conversationView() string {
 	if len(m.messages) == 0 {
-		return helpStyle.Render("\n  Say something to get started.")
+		return m.theme.help.Render("\n  Say something to get started.")
 	}
 	// The transcript can shrink (regenerate drops the last reply, ctrl+n
 	// clears it); stale tail entries must not survive.
@@ -183,17 +183,17 @@ func (m *Model) conversationView() string {
 func (m *Model) renderMessage(msg openai.Message) string {
 	if msg.Role == "user" {
 		var block strings.Builder
-		block.WriteString(userLabelStyle.Render("You"))
+		block.WriteString(m.theme.userLabel.Render("You"))
 		if n := len(msg.Images); n > 0 {
-			block.WriteString("\n" + helpStyle.Render(imageLabel(n)))
+			block.WriteString("\n" + m.theme.help.Render(imageLabel(n)))
 		}
 		for _, f := range msg.Files {
-			block.WriteString("\n" + helpStyle.Render("📄 "+f.Name))
+			block.WriteString("\n" + m.theme.help.Render("📄 "+f.Name))
 		}
 		if msg.Content != "" {
 			block.WriteString("\n" + msg.Content)
 		}
-		return userBlockStyle.Width(m.msgWidth()-4).Render(block.String()) + "\n\n"
+		return m.theme.userBlock.Width(m.msgWidth()-4).Render(block.String()) + "\n\n"
 	}
 	rendered := msg.Content
 	if m.renderer != nil {
@@ -207,8 +207,8 @@ func (m *Model) renderMessage(msg openai.Message) string {
 	if label == "" {
 		label = m.chosen
 	}
-	return botBlockStyle.Width(m.msgWidth()-4).Render(
-		botLabelStyle.Render(label)+"\n"+rendered) + "\n\n"
+	return m.theme.botBlock.Width(m.msgWidth()-4).Render(
+		m.theme.botLabel.Render(label)+"\n"+rendered) + "\n\n"
 }
 
 func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -280,10 +280,10 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help.ShowAll = false
 			if reply, ok := m.lastMessage("assistant"); !ok {
 				m.chatNotice = "nothing to copy yet"
-			} else if err := clipboard.WriteText(reply); err != nil {
-				m.chatNotice = "copy failed: " + err.Error()
 			} else {
 				m.chatNotice = "copied last reply"
+				m.layoutChat()
+				return m, tea.SetClipboard(reply)
 			}
 			m.layoutChat()
 			return m, nil
@@ -298,10 +298,10 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chatNotice = "nothing to copy yet"
 			} else if code, ok := lastCodeBlock(reply); !ok {
 				m.chatNotice = "no code block in the last reply"
-			} else if err := clipboard.WriteText(code); err != nil {
-				m.chatNotice = "copy failed: " + err.Error()
 			} else {
 				m.chatNotice = "copied last code block"
+				m.layoutChat()
+				return m, tea.SetClipboard(code)
 			}
 			m.layoutChat()
 			return m, nil
@@ -401,7 +401,7 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatNotice = ""
 			m.help.ShowAll = false
 			m.layoutChat()
-			m.filePicker = newFilePicker(m.vp.Height() - 1)
+			m.filePicker = newFilePicker(m.vp.Height()-1, m.theme)
 			m.pickingFile = true
 			return m, m.filePicker.Init()
 		case "enter":
@@ -553,7 +553,7 @@ func (m Model) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea.Cmd) 
 
 // newFilePicker builds the attach-file picker, starting in the working
 // directory.
-func newFilePicker(height int) filepicker.Model {
+func newFilePicker(height int, theme theme) filepicker.Model {
 	fp := filepicker.New()
 	if dir, err := os.Getwd(); err == nil {
 		fp.CurrentDirectory = dir
@@ -563,8 +563,8 @@ func newFilePicker(height int) filepicker.Model {
 	// esc must cancel the picker (handled in updateFilePicker), not walk up
 	// a directory.
 	fp.KeyMap.Back = key.NewBinding(key.WithKeys("h", "backspace", "left"), key.WithHelp("h", "back"))
-	fp.Styles.Cursor = fp.Styles.Cursor.Foreground(peach)
-	fp.Styles.Selected = fp.Styles.Selected.Foreground(peach).Bold(true)
+	fp.Styles.Cursor = fp.Styles.Cursor.Foreground(theme.accent)
+	fp.Styles.Selected = fp.Styles.Selected.Foreground(theme.accent).Bold(true)
 	return fp
 }
 
@@ -740,44 +740,44 @@ func (m Model) viewChat() string {
 	var ctxWarn string
 	if pct, ok := m.contextUsed(); ok {
 		if pct >= 80 {
-			ctxWarn = errorStyle.Render(fmt.Sprintf(" • context %d%% full", pct))
+			ctxWarn = m.theme.err.Render(fmt.Sprintf(" • context %d%% full", pct))
 		} else {
 			cost += fmt.Sprintf(" • context %d%%", pct)
 		}
 	}
-	header := headerBarStyle.Render(headerStyle.Render(m.chosen) + helpStyle.Render("  "+cost) + ctxWarn)
+	header := m.theme.headerBar.Render(m.theme.header.Render(m.chosen) + m.theme.help.Render("  "+cost) + ctxWarn)
 
 	// The bottom bar shows one thing at a time, in order of urgency:
 	// error > spinner > notice > picker/system prompt hints > key help.
 	bottomBar := m.help.View(m.keys)
 	if m.editingSystem {
-		bottomBar = helpStyle.Render("enter save • esc cancel • empty prompt clears")
+		bottomBar = m.theme.help.Render("enter save • esc cancel • empty prompt clears")
 	}
 	if m.pickingFile {
-		bottomBar = helpStyle.Render("enter attach • ←/→ folders • esc cancel")
+		bottomBar = m.theme.help.Render("enter attach • ←/→ folders • esc cancel")
 	}
 	if m.chatNotice != "" {
-		bottomBar = helpStyle.Render(m.chatNotice)
+		bottomBar = m.theme.help.Render(m.chatNotice)
 	}
 	if m.waiting {
 		label := " thinking…"
 		if m.streaming {
 			label = " streaming…"
 		}
-		bottomBar = m.spin.View() + helpStyle.Render(label)
+		bottomBar = m.spin.View() + m.theme.help.Render(label)
 	}
 	if m.errText != "" {
-		bottomBar = errorStyle.Render("error: " + m.errText)
+		bottomBar = m.theme.err.Render("error: " + m.errText)
 	}
-	bottomBar = bottomBarStyle.Render(bottomBar)
+	bottomBar = m.theme.bottomBar.Render(bottomBar)
 
-	inputArea := inputRowStyle.Render(m.input.View())
+	inputArea := m.theme.inputRow.Render(m.input.View())
 	if m.editingSystem {
-		inputArea = inputRowStyle.Render(botLabelStyle.Render("System prompt")) +
+		inputArea = m.theme.inputRow.Render(m.theme.botLabel.Render("System prompt")) +
 			"\n" + inputArea
 	}
 	if label := m.attachmentLabel(); label != "" {
-		inputArea = inputRowStyle.Render(helpStyle.Render(label+" — sent with next message")) +
+		inputArea = m.theme.inputRow.Render(m.theme.help.Render(label+" — sent with next message")) +
 			"\n" + inputArea
 	}
 
@@ -785,8 +785,8 @@ func (m Model) viewChat() string {
 	body := m.vp.View()
 	if m.pickingFile {
 		body = lipgloss.NewStyle().Height(m.vp.Height()).MaxHeight(m.vp.Height()).Render(
-			inputRowStyle.Render(botLabelStyle.Render("Attach a file")) + "\n" + m.filePicker.View())
+			m.theme.inputRow.Render(m.theme.botLabel.Render("Attach a file")) + "\n" + m.filePicker.View())
 	}
-	return pageStyle.Render(header + "\n" + body + "\n" +
+	return m.theme.page.Render(header + "\n" + body + "\n" +
 		inputArea + "\n" + bottomBar)
 }

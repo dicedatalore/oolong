@@ -3,6 +3,7 @@ package ui
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -21,10 +22,8 @@ func TestTranscriptRoundTrip(t *testing.T) {
 	am.systemPrompt = "be brief\nand kind"
 	am.messages = []openai.Message{
 		{Role: "user", Content: "show me a heading"},
-		// A reply full of the things the legacy parser chokes on: its own
-		// "## " headings and a fenced block containing one.
-		{Role: "assistant", Model: "gpt-5.6-terra", Content: "## Sure\n\n```md\n## fenced heading\n```\n\ndone"},
-		{Role: "user", Content: "thanks", Images: [][]byte{{1}}},
+		{Role: "assistant", Model: "model --> arbitrary", Content: "## Sure\n\n```md\n## fenced heading\n```\n\n<!--oolong: exact -->"},
+		{Role: "user", Content: "thanks", Images: [][]byte{{1, 2, 3}}, Files: []openai.File{{Name: "a.txt", Text: "contents"}}},
 	}
 
 	got, err := parseTranscript(am.transcriptMarkdown())
@@ -40,59 +39,8 @@ func TestTranscriptRoundTrip(t *testing.T) {
 	if len(got.Messages) != 3 {
 		t.Fatalf("len(Messages) = %d, want 3", len(got.Messages))
 	}
-	for i, want := range am.messages {
-		if got.Messages[i].Role != want.Role || got.Messages[i].Content != want.Content {
-			t.Errorf("message %d = %+v, want role %q content %q",
-				i, got.Messages[i], want.Role, want.Content)
-		}
-	}
-	if got.Messages[1].Model != "gpt-5.6-terra" {
-		t.Errorf("reply model = %q, want gpt-5.6-terra", got.Messages[1].Model)
-	}
-	if !got.DroppedAttachments {
-		t.Error("DroppedAttachments not set for a chat with an image")
-	}
-}
-
-func TestParseLegacyTranscript(t *testing.T) {
-	legacy := `# Oolong chat — gpt-5.6-sol
-
-_2026-01-02 15:04_
-
-**System prompt:** be brief
-
-## You
-
-hello there
-
-## gpt-5.6-sol
-
-hi!
-
-` + "```go\n## not a heading\n```" + `
-
-## You
-
-_📎 1 image_
-
-what is this
-`
-	got, err := parseTranscript(legacy)
-	if err != nil {
-		t.Fatalf("parseTranscript() error = %v", err)
-	}
-	if got.Model != "gpt-5.6-sol" || got.System != "be brief" {
-		t.Errorf("Model/System = %q/%q, want gpt-5.6-sol/be brief", got.Model, got.System)
-	}
-	if len(got.Messages) != 3 {
-		t.Fatalf("len(Messages) = %d, want 3", len(got.Messages))
-	}
-	if !strings.Contains(got.Messages[1].Content, "## not a heading") {
-		t.Error("fenced heading split the reply")
-	}
-	if got.Messages[2].Content != "what is this" || !got.DroppedAttachments {
-		t.Errorf("attachment label mishandled: %+v dropped=%v",
-			got.Messages[2], got.DroppedAttachments)
+	if !reflect.DeepEqual(got.Messages, am.messages) {
+		t.Errorf("messages did not round trip:\n got: %#v\nwant: %#v", got.Messages, am.messages)
 	}
 }
 

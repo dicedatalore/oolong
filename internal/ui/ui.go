@@ -39,12 +39,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
-	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
-	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
-	"github.com/dicedatalore/oolong/internal/ollama"
 	"github.com/dicedatalore/oolong/internal/openai"
+	providerroute "github.com/dicedatalore/oolong/internal/provider"
 )
 
 // sessionState selects which screen is active.
@@ -64,19 +62,16 @@ type Model struct {
 	state  sessionState
 	width  int
 	height int
+	theme  theme
 
 	// model catalog (from the config file, or the built-in list)
 	catalog        []config.Model
 	builtinCatalog bool // active catalog is the compiled-in defaults
 	rates          map[string]modelRates
-	pendingCatalog []config.Model // custom catalog awaiting the availability check
-	pendingModel   string         // default_model to open once the first resize arrives
-	transcriptDir  string         // transcript_dir from config; the env var wins
-	baseURL        string         // global base_url from config; blank when the env var overrides
-	provider       string         // global endpoint protocol; blank means OpenAI
+	pendingModel   string // default_model to open once the first resize arrives
+	transcriptDir  string // transcript_dir from config; the env var wins
 
-	// clients for models with their own base_url, keyed by endpoint and
-	// built on first use; m.client serves the global endpoint.
+	// Clients are cached by resolved provider and endpoint.
 	clients map[string]openai.ChatClient
 
 	// model picker
@@ -146,7 +141,7 @@ type Model struct {
 	keyValidating     bool
 
 	mdStyle    string // glamour style name matching the terminal background
-	client     openai.ChatClient
+	resolver   *providerroute.Resolver
 	logo       string
 	sparkleTag int
 	initCmd    tea.Cmd // startup command, returned by Init
@@ -155,52 +150,60 @@ type Model struct {
 // New builds the initial model. The picker remains available without keys and
 // points to the key manager; cfgErr is surfaced without blocking launch.
 func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr string) Model {
-	if cfg.Accent != "" {
-		// Before the widgets below copy the accent into their own styles.
-		applyAccent(cfg.Accent)
+	resolver := providerroute.NewResolver(cfg)
+	if client != nil {
+		globalRoute := resolver.RouteFor("")
+		injectedProvider, _ := providerroute.KeyProvider(resolver.RouteFor("").Provider)
+		resolveKey := resolver.ResolveKey
+		resolver.ResolveKey = func(provider keystore.Provider) string {
+			if provider == injectedProvider {
+				return "injected"
+			}
+			return resolveKey(provider)
+		}
+		build := resolver.BuildClient
+		resolver.BuildClient = func(route providerroute.Route, key string) openai.ChatClient {
+			if route.Provider == globalRoute.Provider && route.BaseURL == globalRoute.BaseURL {
+				return client
+			}
+			return build(route, key)
+		}
 	}
+	return newModel(resolver, mdStyle, cfg, cfgErr)
+}
+
+// NewWithResolver builds the production UI around the shared route resolver.
+func NewWithResolver(resolver *providerroute.Resolver, mdStyle string, cfg config.Config, cfgErr string) Model {
+	return newModel(resolver, mdStyle, cfg, cfgErr)
+}
+
+func newModel(resolver *providerroute.Resolver, mdStyle string, cfg config.Config, cfgErr string) Model {
+	theme := newTheme(cfg.Accent)
 	m := Model{
+		theme:             theme,
 		state:             statePicker,
-		picker:            newPicker(cfg.SimplePicker),
+		picker:            newPicker(cfg.SimplePicker, theme),
 		simplePicker:      cfg.SimplePicker,
-		input:             newChatInput(),
+		input:             newChatInput(theme),
 		openAIKeyInput:    newKeyInput("sk-..."),
 		anthropicKeyInput: newKeyInput("sk-ant-..."),
 		googleKeyInput:    newKeyInput("AIza..."),
 		keyProvider:       keystore.OpenAI,
-		spin:              newSpinner(),
+		spin:              newSpinner(theme),
 		help:              help.New(),
 		keys:              newChatKeyMap(),
 		mdStyle:           mdStyle,
-		client:            client,
-		logo:              renderLogoHeader(),
+		resolver:          resolver,
+		logo:              renderLogoHeader(theme),
 		transcriptDir:     cfg.TranscriptDir,
-		baseURL:           cfg.BaseURL,
-		provider:          cfg.Provider,
 		recallIdx:         -1,
 	}
 	m.initCmd = sparkleTick(0)
-	openAIClient, canCheckOpenAI := client.(*openai.Client)
-	if cfg.CustomCatalog() && !config.CustomEndpoint(cfg.BaseURL) && canCheckOpenAI {
-		// Config-supplied models show in the picker only once the API
-		// confirms they exist; the check starts now, or from handleKeyCheck
-		// when key entry has to supply the client first. The catalog itself
-		// is active immediately — default_model may open a chat that needs
-		// its rates and reasoning defaults before the check lands.
-		// Custom endpoints skip the check: their model names are not
-		// OpenAI's to vouch for.
-		m.pendingCatalog = cfg.Catalog()
-		m.catalog = m.pendingCatalog
-		m.rates = ratesFrom(m.pendingCatalog)
-		m.keyNotice = "checking model availability…"
-		m.initCmd = tea.Batch(m.initCmd, checkModels(openAIClient))
+	if cfg.CustomCatalog() {
+		m.setCatalog(cfg.Catalog())
 	} else {
-		if cfg.CustomCatalog() {
-			m.setCatalog(cfg.Catalog())
-		} else {
-			m.builtinCatalog = true
-			m.refreshBuiltinCatalog()
-		}
+		m.builtinCatalog = true
+		m.refreshBuiltinCatalog()
 	}
 	if cfg.DefaultModel != "" && m.clientFor(cfg.DefaultModel) != nil {
 		// Skip the picker, but only once the first WindowSizeMsg supplies
@@ -213,99 +216,34 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 		m.keyNotice = cfgErr
 		m.chatNotice = cfgErr
 	}
-	if client == nil && !keystore.Any() && !cfg.HasCustomEndpoint() && m.keyNotice == "" {
+	if !resolver.AnyAvailable() && m.keyNotice == "" {
 		m.keyNotice = "no API keys configured — ctrl+k opens the key manager"
 	}
 	return m
 }
 
-// newClient builds a client for the global endpoint with the given key,
-// honoring a config base_url. Used when key entry replaces the client.
-func (m Model) newClient(key string) openai.ChatClient {
-	if m.provider == "anthropic" {
-		if m.baseURL != "" {
-			return provideranthropic.New(key, provideranthropic.WithBaseURL(m.baseURL))
-		}
-		return provideranthropic.New(key)
-	}
-	if m.provider == "google" {
-		if m.baseURL != "" {
-			return providergoogle.New(key, providergoogle.WithBaseURL(m.baseURL))
-		}
-		return providergoogle.New(key)
-	}
-	if m.provider == "ollama" {
-		return ollama.New(m.baseURL)
-	}
-	if m.baseURL != "" {
-		return openai.New(key, openai.WithBaseURL(m.baseURL))
-	}
-	return openai.New(key)
-}
-
-// clientFor returns the client to talk to a model with: the default client,
-// unless the model's catalog entry names its own base_url, in which case a
-// client for that endpoint is built (once) with the same key.
+// clientFor returns the cached client for a fully resolved model route.
 func (m *Model) clientFor(id string) openai.ChatClient {
-	cm := m.modelConfig(id)
-	url := cm.BaseURL
-	globalProvider := m.provider
-	if globalProvider == "" {
-		globalProvider = "openai"
-	}
-	provider := cm.Provider
-	if provider == "" {
-		provider = globalProvider
-	}
-	if (url == "" || url == m.baseURL) && provider == globalProvider {
-		return m.client
-	}
-	cacheKey := provider + "\x00" + url
+	route := m.resolver.RouteFor(id)
+	cacheKey := string(route.Provider) + "\x00" + route.BaseURL
 	if c, ok := m.clients[cacheKey]; ok {
 		return c
 	}
 	if m.clients == nil {
 		m.clients = make(map[string]openai.ChatClient)
 	}
-	var c openai.ChatClient
-	if provider == "anthropic" {
-		key := keystore.Resolve(keystore.Anthropic)
-		if key == "" {
-			return nil
-		}
-		if url != "" {
-			c = provideranthropic.New(key, provideranthropic.WithBaseURL(url))
-		} else {
-			c = provideranthropic.New(key)
-		}
-	} else if provider == "google" {
-		key := keystore.Resolve(keystore.Google)
-		if key == "" {
-			return nil
-		}
-		if url != "" {
-			c = providergoogle.New(key, providergoogle.WithBaseURL(url))
-		} else {
-			c = providergoogle.New(key)
-		}
-	} else if provider == "ollama" {
-		c = ollama.New(url)
-	} else {
-		key := keystore.Resolve(keystore.OpenAI)
-		if url != "" {
-			c = openai.New(key, openai.WithBaseURL(url))
-		} else {
-			c = openai.New(key)
-		}
+	c := m.resolver.ClientFor(id)
+	if c == nil {
+		return nil
 	}
 	m.clients[cacheKey] = c
 	return c
 }
 
-func newSpinner() spinner.Model {
+func newSpinner(theme theme) spinner.Model {
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
-	spin.Style = lipgloss.NewStyle().Foreground(peach)
+	spin.Style = lipgloss.NewStyle().Foreground(theme.accent)
 	return spin
 }
 
@@ -339,9 +277,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case keyCheckMsg:
 		return m.handleKeyCheck(msg)
 
-	case modelsCheckMsg:
-		return m.handleModelsCheck(msg)
-
 	case spinner.TickMsg:
 		// Advance the spinner only while something is in flight; returning
 		// no follow-up tick command ends the animation loop.
@@ -370,15 +305,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.width = msg.Width
 	m.height = msg.Height
-	m.help.SetWidth(msg.Width - pageStyle.GetHorizontalFrameSize())
+	m.help.SetWidth(msg.Width - m.theme.page.GetHorizontalFrameSize())
 	// Reserve a line for the bottom command bar plus a gap above it,
 	// and room for the logo (with a gap below) when it fits.
-	pickerHeight := msg.Height - pageStyle.GetVerticalFrameSize() - 2
+	pickerHeight := msg.Height - m.theme.page.GetVerticalFrameSize() - 2
 	if logo := m.pickerLogo(); logo != "" {
 		pickerHeight -= lipgloss.Height(logo) + 1
 	}
 	m.picker.SetSize(
-		msg.Width-pageStyle.GetHorizontalFrameSize(),
+		msg.Width-m.theme.page.GetHorizontalFrameSize(),
 		pickerHeight,
 	)
 	// SetSize stretches the filter input to the list's full width, which

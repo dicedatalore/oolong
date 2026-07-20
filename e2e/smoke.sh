@@ -97,7 +97,7 @@ if [ -z "$TRANSCRIPT" ]; then
     echo "FAIL(transcript): no file saved to $OOLONG_TRANSCRIPT_DIR"
     FAILED=1
 else
-    assert_contains "$TRANSCRIPT" transcript "<!--oolong:user-->" "hello from e2e"
+    assert_contains "$TRANSCRIPT" transcript "<!-- oolong-transcript:v1" "hello from e2e"
 fi
 
 echo "== one-shot pipe mode"

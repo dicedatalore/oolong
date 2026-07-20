@@ -140,6 +140,13 @@ func ValidateKey(key string) error {
 	return validateKey(key)
 }
 
+func ValidateKeyAt(key, baseURL string) error {
+	if baseURL == "" {
+		return ValidateKey(key)
+	}
+	return validateKey(key, option.WithBaseURL(baseURL))
+}
+
 // validateKey accepts SDK options so tests can use a local server. Production
 // callers use ValidateKey, which keeps the real provider endpoint.
 func validateKey(key string, opts ...option.RequestOption) error {

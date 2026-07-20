@@ -23,7 +23,6 @@ Preserve the project's core principles:
 - `internal/mathfmt/`: LaTeX-to-Unicode formatting.
 - `e2e/`: fake API and scripted PTY smoke tests.
 - `demo/`: deterministic VHS demo assets.
-- `PLAN.md`: product priorities and explicit non-goals; consult it before adding features.
 
 ## Development guidelines
 
@@ -35,7 +34,6 @@ Preserve the project's core principles:
 - Maintain cross-platform behavior. Do not assume a Unix shell, filesystem layout, or keychain implementation in Go code.
 - Do not persist chats, attachments, prompts, or credentials implicitly. OpenAI requests must continue to disable server-side response storage.
 - Update `README.md` when changing flags, configuration, keybindings, provider behavior, or other user-facing features.
-- Update `PLAN.md` only when the roadmap or standing product decisions genuinely change.
 
 ## Testing and verification
 
@@ -58,7 +56,7 @@ For changes affecting startup, provider routing, model selection, streaming, ter
 
 The E2E harness uses `e2e/fakeapi`; reuse it instead of contacting a real API. When writing a custom PTY scenario, follow the environment isolation and terminal-query handling documented in `.claude/skills/verify/SKILL.md`.
 
-Linux builds with cgo require X11 development headers for `golang.design/x/clipboard`. The project must still build with `CGO_ENABLED=0`, with clipboard image paste disabled through the existing fallback.
+Linux builds with cgo require X11 development headers for `golang.design/x/clipboard`. The project must still build with `CGO_ENABLED=0`, with clipboard image paste disabled through the existing fallback. Text copy uses Bubble Tea's OSC52 support and must work in both builds.
 
 ## Commits and releases
 

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dicedatalore/oolong/internal/config"
+	"github.com/dicedatalore/oolong/internal/provider"
 	"github.com/dicedatalore/oolong/internal/version"
 )
 
@@ -57,7 +59,19 @@ func TestRunConfigInit(t *testing.T) {
 	}
 }
 
-func TestApplyConfigOverrides(t *testing.T) {
+func TestRunWithInjectedResetFailure(t *testing.T) {
+	var stdout, stderr strings.Builder
+	code := runWith([]string{"--reset-key"}, dependencies{
+		stdout:     &stdout,
+		stderr:     &stderr,
+		deleteKeys: func() error { return errors.New("keychain unavailable") },
+	})
+	if code != 1 || !strings.Contains(stderr.String(), "keychain unavailable") {
+		t.Fatalf("runWith() = %d, stderr %q", code, stderr.String())
+	}
+}
+
+func TestProviderEnvironmentOverride(t *testing.T) {
 	cfg := config.Config{
 		Provider:     "openai",
 		BaseURL:      "https://configured.example/v1",
@@ -68,19 +82,19 @@ func TestApplyConfigOverrides(t *testing.T) {
 			{ID: "claude", Provider: "anthropic", BaseURL: "https://anthropic.example"},
 		},
 	}
-	applyConfigOverrides(&cfg, "https://env.example/v1", "flag-model")
-	if cfg.Provider != "" || cfg.BaseURL != "" {
-		t.Errorf("global OpenAI endpoint not cleared: provider=%q baseURL=%q", cfg.Provider, cfg.BaseURL)
+	resolver := provider.NewResolver(cfg)
+	resolver.Getenv = func(name string) string {
+		if name == "OPENAI_BASE_URL" {
+			return "https://env.example/v1"
+		}
+		return ""
 	}
-	if cfg.DefaultModel != "flag-model" {
-		t.Errorf("default model = %q, want flag-model", cfg.DefaultModel)
-	}
-	for _, i := range []int{0, 1} {
-		if cfg.Models[i].Provider != "openai" || cfg.Models[i].BaseURL != "" {
-			t.Errorf("OpenAI model %d not redirected to env endpoint: %+v", i, cfg.Models[i])
+	for _, id := range []string{"openai-default", "openai-explicit"} {
+		if route := resolver.RouteFor(id); route.Provider != provider.OpenAI || route.BaseURL != "https://env.example/v1" {
+			t.Errorf("OpenAI route %q = %+v", id, route)
 		}
 	}
-	if got := cfg.Models[2]; got.Provider != "anthropic" || got.BaseURL != "https://anthropic.example" {
-		t.Errorf("Anthropic model changed by OpenAI override: %+v", got)
+	if route := resolver.RouteFor("claude"); route.Provider != provider.Anthropic || route.BaseURL != "https://anthropic.example" {
+		t.Errorf("Anthropic route changed by OpenAI override: %+v", route)
 	}
 }

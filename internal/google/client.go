@@ -180,6 +180,8 @@ func ValidateKey(key string) error {
 	return validateKey(key, "")
 }
 
+func ValidateKeyAt(key, baseURL string) error { return validateKey(key, baseURL) }
+
 // validateKey accepts a base URL so tests can use a local server. Production
 // callers use ValidateKey, which keeps the real Gemini endpoint.
 func validateKey(key, baseURL string) error {

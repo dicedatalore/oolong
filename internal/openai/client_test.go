@@ -190,22 +190,6 @@ func TestStreamChatSendsOptions(t *testing.T) {
 	}
 }
 
-func TestListModels(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"object":"list","data":[{"id":"gpt-5.4","object":"model","created":1,"owned_by":"openai"},{"id":"gpt-5.6-terra","object":"model","created":1,"owned_by":"openai"}]}`)
-	}))
-	defer srv.Close()
-
-	ids, err := clientFor(srv).ListModels(context.Background())
-	if err != nil {
-		t.Fatalf("ListModels() error = %v", err)
-	}
-	if len(ids) != 2 || !ids["gpt-5.4"] || !ids["gpt-5.6-terra"] {
-		t.Errorf("ListModels() = %v, want gpt-5.4 and gpt-5.6-terra", ids)
-	}
-}
-
 func TestStreamChatFailedResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

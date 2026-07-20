@@ -459,6 +459,22 @@ func TestCopyWithNothingToCopy(t *testing.T) {
 	}
 }
 
+func TestCopyUsesTerminalClipboard(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	model := seedConversation(enterChat(t, srv))
+	model, cmd := model.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("copy returned no OSC52 command")
+	}
+	if got := fmt.Sprint(cmd()); got != "hi" {
+		t.Fatalf("clipboard payload = %q, want hi", got)
+	}
+	if got := model.(Model).chatNotice; got != "copied last reply" {
+		t.Fatalf("chatNotice = %q", got)
+	}
+}
+
 func TestChatViewFillsWindow(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()

@@ -13,8 +13,8 @@ builds:
     goarch: [arm64]
     ldflags:
       - -s -w -X github.com/dicedatalore/oolong/internal/version.Version=v{{ .Version }}
-  # Cross-compiled portable builds; without cgo, image paste degrades to
-  # text paste (internal/clipboard has a !cgo stub).
+  # Cross-compiled portable builds; without cgo, only clipboard image reading
+  # is disabled. Text copy uses the terminal's OSC52 support.
   - id: portable
     binary: oolong
     env:
@@ -24,8 +24,6 @@ builds:
     ignore:
       - goos: darwin
         goarch: arm64 # covered by the cgo build above
-      - goos: windows
-        goarch: arm64
     ldflags:
       - -s -w -X github.com/dicedatalore/oolong/internal/version.Version=v{{ .Version }}
 

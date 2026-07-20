@@ -47,9 +47,8 @@ type Config struct {
 const OfficialBaseURL = "https://api.openai.com/v1"
 
 // CustomEndpoint reports whether url points somewhere other than the
-// official OpenAI API. Key validation and the model availability check are
-// OpenAI-specific and are skipped on custom endpoints (Ollama, LM Studio,
-// OpenRouter, …).
+// official OpenAI API. Custom OpenAI-compatible endpoints may use their own
+// authentication and are allowed to start without an OpenAI key.
 func CustomEndpoint(url string) bool {
 	return url != "" && strings.TrimSuffix(url, "/") != OfficialBaseURL
 }
@@ -63,34 +62,8 @@ func (c Config) Catalog() []Model {
 	return DefaultModels
 }
 
-// CustomCatalog reports whether the catalog came from the config file; such
-// models are checked against the API before the picker displays them.
+// CustomCatalog reports whether the catalog came from the config file.
 func (c Config) CustomCatalog() bool { return len(c.Models) > 0 }
-
-// KeyedProvider reports whether a provider always needs an API key, even on
-// a custom endpoint — their SDKs authenticate every request.
-func KeyedProvider(provider string) bool {
-	return provider == "anthropic" || provider == "google"
-}
-
-// HasCustomEndpoint reports whether any configured route can be used without
-// an OpenAI key. This lets a catalog containing only per-model local routes
-// reach the picker instead of being stopped by first-run key entry.
-func (c Config) HasCustomEndpoint() bool {
-	if !KeyedProvider(c.Provider) && CustomEndpoint(c.BaseURL) {
-		return true
-	}
-	for _, m := range c.Models {
-		provider := m.Provider
-		if provider == "" {
-			provider = c.Provider
-		}
-		if !KeyedProvider(provider) && CustomEndpoint(m.BaseURL) {
-			return true
-		}
-	}
-	return false
-}
 
 // Path returns the config file location: $XDG_CONFIG_HOME/oolong/config.toml,
 // defaulting to ~/.config/oolong/config.toml.
@@ -151,7 +124,7 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 # provider = "openai"             # protocol for the global endpoint
 
 # Replaces the built-in model catalog when present. Any model your API key
-# can access works; unavailable models are hidden from the picker.
+# can access works; provider errors are shown when a model is used.
 # [[models]]
 # id = "gpt-5.6-terra"
 # provider = "openai"

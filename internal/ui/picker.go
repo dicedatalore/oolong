@@ -4,7 +4,6 @@ package ui
 // to, shown beneath the animated logo. Picking one opens a fresh chat.
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"math"
@@ -18,8 +17,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/dicedatalore/oolong/internal/config"
-	"github.com/dicedatalore/oolong/internal/keystore"
-	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 // USD per 1M tokens.
@@ -29,9 +26,8 @@ type modelRates struct {
 }
 
 // setCatalog makes models the active catalog: it rebuilds the rates map and
-// the picker rows from it, grouped by provider. The catalog starts as the
-// config's (or built-in) list in New and shrinks when the availability check
-// drops models. Grouping copies into a fresh slice, which also keeps the
+// the picker rows from it, grouped by provider. Grouping copies into a fresh
+// slice, which also keeps the
 // picker's in-place effort edits away from the shared config.DefaultModels slice.
 // In the full view each provider group sits under its own header row; the
 // simple view lists the models bare.
@@ -72,14 +68,10 @@ func (m Model) groupByProvider(models []config.Model) []config.Model {
 	return grouped
 }
 
-// resolvedProvider applies the fallback chain a model's provider field goes
-// through everywhere else: the global provider, then OpenAI.
+// resolvedProvider applies the display fallback for an omitted provider.
 func (m Model) resolvedProvider(provider string) string {
 	if provider == "" {
-		provider = m.provider
-	}
-	if provider == "" {
-		return "openai"
+		provider = string(m.resolver.RouteFor("").Provider)
 	}
 	return provider
 }
@@ -127,29 +119,8 @@ func (m *Model) refreshBuiltinCatalog() {
 	}
 	models := make([]config.Model, 0, len(config.DefaultModels))
 	for _, model := range config.DefaultModels {
-		provider := model.Provider
-		if provider == "" {
-			provider = "openai"
-		}
-		switch provider {
-		case "ollama":
+		if m.resolver.Available(m.resolver.RouteFor(model.ID)) {
 			models = append(models, model)
-		case "anthropic":
-			if keystore.Resolve(keystore.Anthropic) != "" {
-				models = append(models, model)
-			}
-		case "google":
-			if keystore.Resolve(keystore.Google) != "" {
-				models = append(models, model)
-			}
-		case "openai":
-			globalProvider := m.provider
-			if globalProvider == "" {
-				globalProvider = "openai"
-			}
-			if keystore.Resolve(keystore.OpenAI) != "" || (m.client != nil && globalProvider == "openai") {
-				models = append(models, model)
-			}
 		}
 	}
 	m.setCatalog(models)
@@ -226,7 +197,10 @@ func price(v float64) string {
 
 // pickerDelegate renders provider header rows itself and hands model rows to
 // the wrapped default delegate.
-type pickerDelegate struct{ list.DefaultDelegate }
+type pickerDelegate struct {
+	list.DefaultDelegate
+	theme theme
+}
 
 func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	h, ok := item.(headerItem)
@@ -240,32 +214,32 @@ func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	if index > 0 {
 		io.WriteString(w, "\n")
 	}
-	io.WriteString(w, "  "+headerStyle.Render(h.name))
+	io.WriteString(w, "  "+d.theme.header.Render(h.name))
 }
 
 // newPickerDelegate builds the row renderer for the requested view: the full
 // view shows a description line under each model with a blank row between,
 // the simple view packs bare one-line rows.
-func newPickerDelegate(simple bool) pickerDelegate {
+func newPickerDelegate(simple bool, theme theme) pickerDelegate {
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
-		Foreground(peach).BorderForeground(peach)
+		Foreground(theme.accent).BorderForeground(theme.accent)
 	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
-		Foreground(peachDim).BorderForeground(peach)
+		Foreground(theme.accentDim).BorderForeground(theme.accent)
 	delegate.ShowDescription = !simple
 	if simple {
 		delegate.SetSpacing(0)
 	}
-	return pickerDelegate{delegate}
+	return pickerDelegate{DefaultDelegate: delegate, theme: theme}
 }
 
-func newPicker(simple bool) list.Model {
+func newPicker(simple bool, theme theme) list.Model {
 	var items []list.Item
-	picker := list.New(items, newPickerDelegate(simple), 0, 0)
+	picker := list.New(items, newPickerDelegate(simple, theme), 0, 0)
 	// Provider headers between the rows serve as the picker's titles; the
 	// title bar area stays reserved for the filter input.
 	picker.SetShowTitle(false)
-	picker.Styles.ActivePaginationDot = picker.Styles.ActivePaginationDot.Foreground(peach)
+	picker.Styles.ActivePaginationDot = picker.Styles.ActivePaginationDot.Foreground(theme.accent)
 	picker.SetShowStatusBar(false)
 	// Help renders separately in viewPicker so the list block can be centered
 	// while the command bar stays pinned to the bottom of the window.
@@ -354,76 +328,10 @@ func (m *Model) adjustEffort(delta int) tea.Cmd {
 	return nil
 }
 
-// modelsCheckMsg carries the result of listing the models available to the
-// API key, used to vet a user-configured catalog before displaying it.
-type modelsCheckMsg struct {
-	available map[string]bool
-	err       error
-}
-
-// checkModels asks the API which models exist. Only custom catalogs are
-// checked — the built-in list is assumed good.
-func checkModels(client *openai.Client) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		available, err := client.ListModels(ctx)
-		return modelsCheckMsg{available: available, err: err}
-	}
-}
-
-// handleModelsCheck resolves the pending custom catalog: available models
-// become the picker's catalog, unavailable ones are dropped with a notice.
-// If the check itself failed the whole catalog shows — an API hiccup must
-// not lock the user out of their models.
-func (m Model) handleModelsCheck(msg modelsCheckMsg) (tea.Model, tea.Cmd) {
-	if m.pendingCatalog == nil {
-		return m, nil
-	}
-	pending := m.pendingCatalog
-	m.pendingCatalog = nil
-	if msg.err != nil {
-		m.setCatalog(pending)
-		m.keyNotice = "couldn't verify model availability: " + msg.err.Error()
-		return m, nil
-	}
-	kept := make([]config.Model, 0, len(pending))
-	var dropped []string
-	for _, cm := range pending {
-		provider := cm.Provider
-		if provider == "" {
-			provider = m.provider
-		}
-		if provider == "" {
-			provider = "openai"
-		}
-		// Other providers and per-model endpoints are outside the scope of
-		// the official OpenAI model list and must survive this check.
-		if provider != "openai" || cm.BaseURL != "" || msg.available[cm.ID] {
-			kept = append(kept, cm)
-		} else {
-			dropped = append(dropped, cm.ID)
-		}
-	}
-	switch {
-	case len(kept) == 0:
-		m.builtinCatalog = true
-		m.refreshBuiltinCatalog()
-		m.keyNotice = "no configured model is available — using the built-in catalog"
-	case len(dropped) > 0:
-		m.setCatalog(kept)
-		m.keyNotice = "unavailable models hidden: " + strings.Join(dropped, ", ")
-	default:
-		m.setCatalog(kept)
-		m.keyNotice = ""
-	}
-	return m, nil
-}
-
 // pickerLogo returns the banner shown above the model picker, or "" when the
 // window is too narrow for the wordmark to fit without wrapping.
 func (m Model) pickerLogo() string {
-	contentWidth := m.width - pageStyle.GetHorizontalFrameSize()
+	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
 	if contentWidth < lipgloss.Width(logoRows[0]) {
 		return ""
 	}
@@ -447,7 +355,7 @@ func (m Model) handleSparkle(msg sparkleMsg) (tea.Model, tea.Cmd) {
 	if m.state != statePicker || msg.tag != m.sparkleTag {
 		return m, nil
 	}
-	m.logo = renderLogoHeader()
+	m.logo = renderLogoHeader(m.theme)
 	return m, sparkleTick(msg.tag)
 }
 
@@ -483,7 +391,7 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.picker.ResetFilter()
 			m.simplePicker = !m.simplePicker
-			m.picker.SetDelegate(newPickerDelegate(m.simplePicker))
+			m.picker.SetDelegate(newPickerDelegate(m.simplePicker, m.theme))
 			m.setCatalog(m.catalog)
 			m.selectModel(selected)
 			return m, nil
@@ -513,8 +421,8 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 // viewPicker centers the logo and list as one block, with the command bar
 // pinned to the bottom of the window.
 func (m Model) viewPicker() string {
-	contentWidth := m.width - pageStyle.GetHorizontalFrameSize()
-	contentHeight := m.height - pageStyle.GetVerticalFrameSize()
+	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
+	contentHeight := m.height - m.theme.page.GetVerticalFrameSize()
 
 	// The list pads itself to its set height; trim that so the block
 	// centers on its actual content.
@@ -535,12 +443,12 @@ func (m Model) viewPicker() string {
 	// help widget can render the picker's keys directly.
 	bottomBar := m.help.View(m.picker)
 	if m.keyNotice != "" {
-		bottomBar = noticeStyle.Render(m.keyNotice) + "\n\n" + bottomBar
+		bottomBar = m.theme.notice.Render(m.keyNotice) + "\n\n" + bottomBar
 	}
 	bottomBarHeight := lipgloss.Height(bottomBar)
 
 	centered := lipgloss.Place(contentWidth, contentHeight-bottomBarHeight,
 		lipgloss.Center, lipgloss.Center, view)
-	return pageStyle.Render(centered + "\n" +
+	return m.theme.page.Render(centered + "\n" +
 		lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, bottomBar))
 }

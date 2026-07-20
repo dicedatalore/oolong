@@ -1,11 +1,9 @@
 package ui
 
-// Tests for config-driven behavior: the custom model catalog and its
-// availability check, default_model skipping the picker, and the reasoning
-// effort controls.
+// Tests for config-driven behavior: custom catalogs, default_model skipping
+// the picker, per-model routes, and reasoning effort controls.
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,9 +24,7 @@ func customCatalog() []config.Model {
 	}
 }
 
-// newCustomModel builds a sized model with a custom catalog whose
-// availability check is still outstanding. The keyring is mocked and the key
-// env vars cleared so no test reads real credentials.
+// newCustomModel builds a sized model with isolated credentials.
 func newCustomModel(t *testing.T, srv *httptest.Server, cfg config.Config) tea.Model {
 	t.Helper()
 	keyring.MockInit()
@@ -40,122 +36,21 @@ func newCustomModel(t *testing.T, srv *httptest.Server, cfg config.Config) tea.M
 	return model
 }
 
-func TestCustomCatalogWaitsForAvailabilityCheck(t *testing.T) {
+func TestCustomCatalogAppearsImmediately(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()
 
 	model := newCustomModel(t, srv, config.Config{Models: customCatalog()})
 	am := model.(Model)
-	if n := len(am.picker.Items()); n != 0 {
-		t.Errorf("picker shows %d items before the availability check", n)
-	}
-	if !strings.Contains(am.keyNotice, "checking") {
-		t.Errorf("keyNotice = %q, want a checking notice", am.keyNotice)
-	}
-	// The catalog itself is live already: rates and reasoning defaults must
-	// not wait for the check (default_model may already be chatting).
 	if len(am.rates) != 2 {
 		t.Errorf("rates = %v, want both custom models", am.rates)
 	}
-
-	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{"gpt-5.4": true, "gpt-5.6-terra": true}})
-	am = model.(Model)
 	if n := len(pickerModels(am)); n != 2 {
-		t.Fatalf("picker shows %d models after the check, want 2", n)
-	}
-	if am.keyNotice != "" {
-		t.Errorf("keyNotice = %q, want empty after a clean check", am.keyNotice)
+		t.Fatalf("picker shows %d models, want 2", n)
 	}
 	item := pickerModels(am)[0]
 	if item.id != "gpt-5.4" || !strings.Contains(item.desc, "$1.25 in / $10 out") {
 		t.Errorf("first item = %+v, want gpt-5.4 with rates", item)
-	}
-}
-
-func TestAvailabilityCheckDropsUnknownModels(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer srv.Close()
-
-	model := newCustomModel(t, srv, config.Config{Models: customCatalog()})
-	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{"gpt-5.6-terra": true}})
-	am := model.(Model)
-	if n := len(pickerModels(am)); n != 1 {
-		t.Fatalf("picker shows %d models, want 1", n)
-	}
-	if pickerModels(am)[0].id != "gpt-5.6-terra" {
-		t.Error("wrong model survived the availability check")
-	}
-	if !strings.Contains(am.keyNotice, "gpt-5.4") {
-		t.Errorf("keyNotice = %q, want it to name the hidden model", am.keyNotice)
-	}
-}
-
-func TestAvailabilityCheckFallsBackWhenNothingAvailable(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer srv.Close()
-
-	model := newCustomModel(t, srv, config.Config{Models: customCatalog()})
-	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{}})
-	am := model.(Model)
-	if n, want := len(pickerModels(am)), builtinProviderCount("openai"); n != want {
-		t.Fatalf("picker shows %d models, want the %d OpenAI built-ins", n, want)
-	}
-	if !strings.Contains(am.keyNotice, "built-in") {
-		t.Errorf("keyNotice = %q, want a fallback notice", am.keyNotice)
-	}
-}
-
-func TestAvailabilityCheckErrorShowsWholeCatalog(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer srv.Close()
-
-	model := newCustomModel(t, srv, config.Config{Models: customCatalog()})
-	model, _ = model.Update(modelsCheckMsg{err: errors.New("timeout")})
-	am := model.(Model)
-	if n := len(pickerModels(am)); n != 2 {
-		t.Fatalf("picker shows %d models after a failed check, want all 2", n)
-	}
-	if !strings.Contains(am.keyNotice, "couldn't verify") {
-		t.Errorf("keyNotice = %q, want a verification warning", am.keyNotice)
-	}
-}
-
-func TestCustomEndpointSkipsAvailabilityCheck(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer srv.Close()
-
-	cfg := config.Config{BaseURL: "http://localhost:11434/v1", Models: customCatalog()}
-	model := newCustomModel(t, srv, cfg)
-	am := model.(Model)
-	if am.pendingCatalog != nil {
-		t.Error("custom endpoint left the catalog waiting on the availability check")
-	}
-	if n := len(pickerModels(am)); n != 2 {
-		t.Errorf("picker shows %d models, want the full catalog immediately", n)
-	}
-	if strings.Contains(am.keyNotice, "checking") {
-		t.Errorf("keyNotice = %q, want no checking notice", am.keyNotice)
-	}
-}
-
-func TestAvailabilityCheckKeepsModelsWithOwnEndpoint(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer srv.Close()
-
-	catalog := customCatalog()
-	catalog[0].BaseURL = "http://localhost:11434/v1"
-	model := newCustomModel(t, srv, config.Config{Models: catalog})
-	// Neither model is in the OpenAI list, but the first lives elsewhere.
-	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{}})
-	am := model.(Model)
-	if n := len(pickerModels(am)); n != 1 {
-		t.Fatalf("picker shows %d models, want 1", n)
-	}
-	if pickerModels(am)[0].id != "gpt-5.4" {
-		t.Error("the model with its own endpoint did not survive the check")
-	}
-	if !strings.Contains(am.keyNotice, "gpt-5.6-terra") {
-		t.Errorf("keyNotice = %q, want it to name the hidden model", am.keyNotice)
 	}
 }
 
@@ -227,6 +122,19 @@ func TestConfigErrorSurfacesOnPicker(t *testing.T) {
 	am.state = statePicker // nil client starts on key entry; the notice belongs to the picker
 	if v := am.viewPicker(); !strings.Contains(v, "config: something broke") {
 		t.Error("picker view does not show the config error")
+	}
+}
+
+func TestAccentIsOwnedByEachModel(t *testing.T) {
+	custom := New(nil, "dark", config.Config{Accent: "#112233"}, "")
+	defaults := New(nil, "dark", config.Config{}, "")
+	customView := custom.theme.notice.Render("notice")
+	defaultView := defaults.theme.notice.Render("notice")
+	if customView == defaultView {
+		t.Fatal("custom and default themes render the same accent")
+	}
+	if got := New(nil, "dark", config.Config{}, "").theme.notice.Render("notice"); got != defaultView {
+		t.Fatal("constructing a custom theme mutated later default models")
 	}
 }
 
@@ -315,7 +223,6 @@ func TestStreamCarriesEffortFromConfigAndPicker(t *testing.T) {
 
 	// Back on the picker, one right (medium → high) retunes the model; the
 	// continued chat picks the new effort up.
-	model, _ = model.Update(modelsCheckMsg{available: map[string]bool{"gpt-5.4": true}})
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if model.(Model).state != statePicker {
 		t.Fatal("esc did not return to the picker")
