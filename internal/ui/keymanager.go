@@ -10,6 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/dicedatalore/oolong/internal/keystore"
 	providerroute "github.com/dicedatalore/oolong/internal/provider"
@@ -111,9 +112,9 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "esc":
 			return m.closeKeyManager()
-		case "tab", "down":
+		case "tab", "down", "right":
 			return m, m.selectKeyProvider(m.stepKeyProvider(+1))
-		case "up":
+		case "shift+tab", "up", "left":
 			return m, m.selectKeyProvider(m.stepKeyProvider(-1))
 		case "ctrl+d":
 			if err := keystore.Delete(m.keyProvider); err != nil {
@@ -182,28 +183,57 @@ func providerName(provider keystore.Provider) string {
 	return "OpenAI"
 }
 
-func (m Model) keyRow(provider keystore.Provider, input textinput.Model) string {
-	marker := "  "
-	if m.keyProvider == provider {
-		marker = "› "
+func (m Model) keyProviderTabs() string {
+	tabs := make([]string, 0, len(keyProviders))
+	for _, provider := range keyProviders {
+		style := lipgloss.NewStyle().Padding(0, 1).Foreground(m.theme.accentDim)
+		if provider == m.keyProvider {
+			style = style.Foreground(lipgloss.Color("235")).Background(m.theme.accent).Bold(true)
+		}
+		tabs = append(tabs, style.Render(providerName(provider)))
 	}
-	label := m.theme.header.Render(providerName(provider))
-	status := m.keyStatuses[provider]
-	if status == "" {
-		status = "not set"
+	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+}
+
+func (m Model) keyStatus(provider keystore.Provider) string {
+	switch m.keyStatuses[provider] {
+	case "environment":
+		return m.theme.notice.Render("● Provided by " + keystore.EnvName(provider))
+	case "keychain":
+		return m.theme.notice.Render("● Saved on this device")
+	default:
+		return m.theme.help.Render("○ No key configured")
 	}
-	statusText := m.theme.help.Render(" (" + status + ")")
-	return marker + label + statusText + "\n" + m.theme.inputRow.Render(input.View())
+}
+
+func (m Model) keyCard() string {
+	provider := m.keyProvider
+	input := *m.keyInput(provider)
+	// Width applies to the card's content; leave room for its padding, border,
+	// page frame, and the two-space alignment used by the tabs above it.
+	width := min(56, max(20, m.width-m.theme.page.GetHorizontalFrameSize()-8))
+	input.SetWidth(width - 4)
+
+	description := "Paste a new key below. It will be validated before it is saved."
+	if m.keyStatuses[provider] == "environment" {
+		description = "The environment value takes priority. Saving a key here will keep it as a fallback."
+	} else if m.keyStatuses[provider] == "keychain" {
+		description = "Enter a new key to replace the one saved on this device."
+	}
+	body := m.keyStatus(provider) + "\n\n" + m.theme.help.Render(description) + "\n\n" + input.View()
+	return lipgloss.NewStyle().
+		Width(width).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.accentDim).
+		Padding(1, 2).
+		MarginLeft(2).
+		Render(body)
 }
 
 func (m Model) viewKeyManager() string {
-	header := m.theme.headerBar.Render(m.theme.header.Render("API key manager"))
-	rows := make([]string, 0, len(keyProviders))
-	for _, provider := range keyProviders {
-		rows = append(rows, m.keyRow(provider, *m.keyInput(provider)))
-	}
-	body := strings.Join(rows, "\n\n")
-	bottom := m.theme.help.Render("tab/↑/↓: select • enter: validate/save • ctrl+d: delete • esc: back")
+	header := m.theme.headerBar.Render(m.theme.header.Render("API keys"))
+	body := "  " + m.keyProviderTabs() + "\n\n" + m.keyCard()
+	bottom := m.theme.help.Render("←/→ or tab: provider • enter: verify & save • ctrl+d: remove saved key • esc: back")
 	if m.keyValidating {
 		bottom = m.spin.View() + m.theme.help.Render("validating "+providerName(m.keyProvider)+" key…")
 	} else if m.keyErr != "" {

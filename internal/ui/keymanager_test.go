@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/zalando/go-keyring"
 
 	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
@@ -125,6 +126,55 @@ func TestKeyManagerCyclesThreeProviders(t *testing.T) {
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := model.(Model).keyProvider; got != keystore.Google {
 		t.Errorf("up from openai landed on %q, want wrap to google", got)
+	}
+}
+
+func TestKeyManagerUsesHumanReadableCredentialStatuses(t *testing.T) {
+	model := newKeyManagerModel(t)
+	am := model.(Model)
+	am.keyStatuses[keystore.OpenAI] = "keychain"
+	view := am.viewKeyManager()
+	if !strings.Contains(view, "Saved on this device") || strings.Contains(view, "(keychain)") {
+		t.Errorf("saved status is unclear: %q", view)
+	}
+
+	t.Setenv("OPENAI_API_KEY", "sk-env-test")
+	am.refreshKeyStatuses()
+	view = am.viewKeyManager()
+	if !strings.Contains(view, "Provided by OPENAI_API_KEY") {
+		t.Errorf("environment status does not name its source: %q", view)
+	}
+}
+
+func TestKeyManagerArrowKeysSelectProvider(t *testing.T) {
+	model := newKeyManagerModel(t)
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	if got := model.(Model).keyProvider; got != keystore.Anthropic {
+		t.Fatalf("right selected %q, want anthropic", got)
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if got := model.(Model).keyProvider; got != keystore.OpenAI {
+		t.Fatalf("left selected %q, want openai", got)
+	}
+}
+
+func TestKeyManagerCardFitsNarrowTerminal(t *testing.T) {
+	model := newKeyManagerModel(t)
+	am := model.(Model)
+	am.width = 40
+	if got := lipgloss.Width(am.keyCard()); got > am.width {
+		t.Errorf("card width = %d, terminal width = %d", got, am.width)
+	}
+}
+
+func TestKeyManagerCardBordersAlign(t *testing.T) {
+	model := newKeyManagerModel(t)
+	lines := strings.Split(model.(Model).keyCard(), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("card rendered only %d line(s)", len(lines))
+	}
+	if top, side := strings.Index(lines[0], "╭"), strings.Index(lines[1], "│"); top != side {
+		t.Errorf("top border starts at column %d, side border at %d", top, side)
 	}
 }
 
