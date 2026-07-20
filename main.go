@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -22,12 +24,20 @@ import (
 )
 
 func main() {
-	resetKey := flag.Bool("reset-key", false, "delete stored API keys from the OS keychain and exit")
-	showVersion := flag.Bool("version", false, "print the version and exit")
-	model := flag.String("model", "", "open a chat with this model id, skipping the picker")
-	resume := flag.String("resume", "", "resume a conversation from a transcript saved with ctrl+s")
-	flag.Usage = func() {
-		fmt.Fprint(flag.CommandLine.Output(), `Usage:
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run owns command-line routing and returns the process exit code. Keeping
+// os.Exit in main makes the routing testable without starting subprocesses.
+func run(argv []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("oolong", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	resetKey := flags.Bool("reset-key", false, "delete stored API keys from the OS keychain and exit")
+	showVersion := flags.Bool("version", false, "print the version and exit")
+	model := flags.String("model", "", "open a chat with this model id, skipping the picker")
+	resume := flags.String("resume", "", "resume a conversation from a transcript saved with ctrl+s")
+	flags.Usage = func() {
+		fmt.Fprint(stderr, `Usage:
   oolong                   open the chat TUI
   oolong "prompt"          one-shot: stream the answer to stdout, no TUI
   ... | oolong ["prompt"]  send piped input as context (one-shot)
@@ -35,63 +45,47 @@ func main() {
 
 Flags:
 `)
-		flag.PrintDefaults()
+		flags.PrintDefaults()
 	}
-	flag.Parse()
+	if err := flags.Parse(argv); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
 	if *showVersion {
-		fmt.Println("oolong " + version.String())
-		return
+		fmt.Fprintln(stdout, "oolong "+version.String())
+		return 0
 	}
 	if *resetKey {
 		if err := keystore.DeleteAll(); err != nil {
-			fmt.Fprintf(os.Stderr, "reset-key: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "reset-key: %v\n", err)
+			return 1
 		}
-		fmt.Println("Stored API keys deleted.")
-		return
+		fmt.Fprintln(stdout, "Stored API keys deleted.")
+		return 0
 	}
-	args := flag.Args()
+	args := flags.Args()
 	if len(args) > 0 && args[0] == "config" {
 		// "config" is reserved so a typoed subcommand doesn't get sent to a
 		// model as a one-shot prompt.
 		if len(args) == 2 && args[1] == "init" {
 			path, err := config.Init()
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				fmt.Fprintln(stderr, err)
+				return 1
 			}
-			fmt.Println("Wrote " + path)
-			return
+			fmt.Fprintln(stdout, "Wrote "+path)
+			return 0
 		}
-		fmt.Fprintf(os.Stderr, "unknown command %q (did you mean \"config init\"?)\n", strings.Join(args, " "))
-		os.Exit(2)
+		fmt.Fprintf(stderr, "unknown command %q (did you mean \"config init\"?)\n", strings.Join(args, " "))
+		return 2
 	}
 
 	// A bad config file must never block launch: Load always returns a
 	// usable config, and the error surfaces as a notice inside the UI.
 	cfg, cfgErr := config.Load()
-	if os.Getenv("OPENAI_BASE_URL") != "" {
-		// The env var wins over configured OpenAI endpoints — and keeps the
-		// standard OpenAI behaviors (key validation, availability check),
-		// so a driver pointing at a fake server still exercises them. The
-		// SDK picks the env var up on its own.
-		if cfg.Provider == "" || cfg.Provider == "openai" {
-			cfg.BaseURL = ""
-			cfg.Provider = ""
-		}
-		for i := range cfg.Models {
-			if cfg.Models[i].Provider == "" || cfg.Models[i].Provider == "openai" {
-				cfg.Models[i].BaseURL = ""
-				cfg.Models[i].Provider = "openai"
-			}
-		}
-	}
-	if *model != "" {
-		// The flag wins over the config's default_model and is passed
-		// through unvalidated: any model the API key can access works,
-		// and a typo surfaces as a clear API error on the first send.
-		cfg.DefaultModel = *model
-	}
+	applyConfigOverrides(&cfg, os.Getenv("OPENAI_BASE_URL"), *model)
 	var cfgNotice string
 	if cfgErr != nil {
 		cfgNotice = cfgErr.Error()
@@ -101,13 +95,13 @@ Flags:
 	// answer to stdout and exit, no TUI.
 	if stdin, piped := oneshot.PipedStdin(); len(args) > 0 || piped {
 		if *resume != "" {
-			fmt.Fprintln(os.Stderr, "--resume opens the TUI and cannot be combined with a one-shot prompt")
-			os.Exit(2)
+			fmt.Fprintln(stderr, "--resume opens the TUI and cannot be combined with a one-shot prompt")
+			return 2
 		}
 		if cfgNotice != "" {
-			fmt.Fprintln(os.Stderr, cfgNotice)
+			fmt.Fprintln(stderr, cfgNotice)
 		}
-		os.Exit(oneshot.Run(cfg, strings.Join(args, " "), stdin, os.Stdout))
+		return oneshot.Run(cfg, strings.Join(args, " "), stdin, stdout)
 	}
 
 	// Query the terminal background before Bubble Tea owns the tty; doing it
@@ -155,8 +149,8 @@ Flags:
 	if *resume != "" {
 		t, err := ui.LoadTranscript(*resume)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "resume: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "resume: %v\n", err)
+			return 1
 		}
 		if *model != "" {
 			// An explicit --model outranks the model named in the file.
@@ -166,7 +160,36 @@ Flags:
 	}
 	p := tea.NewProgram(uiModel)
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error running program: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "error running program: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// applyConfigOverrides applies process-level settings after loading the
+// config file. Command-line values win over config, and OPENAI_BASE_URL wins
+// over configured OpenAI endpoints while leaving other providers untouched.
+func applyConfigOverrides(cfg *config.Config, openAIBaseURL, model string) {
+	if openAIBaseURL != "" {
+		// The env var wins over configured OpenAI endpoints — and keeps the
+		// standard OpenAI behaviors (key validation, availability check),
+		// so a driver pointing at a fake server still exercises them. The
+		// SDK picks the env var up on its own.
+		if cfg.Provider == "" || cfg.Provider == "openai" {
+			cfg.BaseURL = ""
+			cfg.Provider = ""
+		}
+		for i := range cfg.Models {
+			if cfg.Models[i].Provider == "" || cfg.Models[i].Provider == "openai" {
+				cfg.Models[i].BaseURL = ""
+				cfg.Models[i].Provider = "openai"
+			}
+		}
+	}
+	if model != "" {
+		// The flag wins over the config's default_model and is passed
+		// through unvalidated: any model the API key can access works,
+		// and a typo surfaces as a clear API error on the first send.
+		cfg.DefaultModel = model
 	}
 }

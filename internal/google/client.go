@@ -177,9 +177,17 @@ func apiError(err error) error {
 
 // ValidateKey checks a Google API key without generating tokens.
 func ValidateKey(key string) error {
+	return validateKey(key, "")
+}
+
+// validateKey accepts a base URL so tests can use a local server. Production
+// callers use ValidateKey, which keeps the real Gemini endpoint.
+func validateKey(key, baseURL string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: key, Backend: genai.BackendGeminiAPI})
+	cfg := &genai.ClientConfig{APIKey: key, Backend: genai.BackendGeminiAPI}
+	cfg.HTTPOptions.BaseURL = baseURL
+	client, err := genai.NewClient(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("google: %v", err)
 	}

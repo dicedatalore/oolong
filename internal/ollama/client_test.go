@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dicedatalore/oolong/internal/openai"
 )
@@ -63,5 +64,30 @@ func TestStreamError(t *testing.T) {
 	ev := <-ch
 	if ev.Err == nil || ev.Err.Error() != "ollama: model not found" {
 		t.Errorf("err = %v", ev.Err)
+	}
+}
+
+func TestStreamChatCancel(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan openai.StreamEvent)
+	go New(srv.URL).StreamChat(ctx, "gemma3", nil, openai.Options{}, ch)
+	<-started
+	cancel()
+	select {
+	case ev, ok := <-ch:
+		if ok {
+			t.Fatalf("event after cancellation = %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not close after cancellation")
 	}
 }

@@ -137,9 +137,16 @@ func apiError(err error) error {
 
 // ValidateKey checks an Anthropic key without generating tokens.
 func ValidateKey(key string) error {
+	return validateKey(key)
+}
+
+// validateKey accepts SDK options so tests can use a local server. Production
+// callers use ValidateKey, which keeps the real provider endpoint.
+func validateKey(key string, opts ...option.RequestOption) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	client := sdk.NewClient(option.WithAPIKey(key))
+	opts = append([]option.RequestOption{option.WithAPIKey(key)}, opts...)
+	client := sdk.NewClient(opts...)
 	_, err := client.Models.List(ctx, sdk.ModelListParams{})
 	var apiErr *sdk.Error
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized {

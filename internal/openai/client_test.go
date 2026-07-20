@@ -257,3 +257,36 @@ func TestStreamChatCancel(t *testing.T) {
 		t.Fatal("StreamChat goroutine leaked after cancel")
 	}
 }
+
+func TestValidateKey(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"valid", http.StatusOK, `{"data":[]}`, ""},
+		{"unauthorized hides key", http.StatusUnauthorized, `{"error":{"message":"bad sk-secret"}}`, "invalid API key"},
+		{"server error", http.StatusInternalServerError, `{"error":{"message":"down"}}`, "openai: HTTP 500"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				fmt.Fprint(w, tt.body)
+			}))
+			defer srv.Close()
+			err := validateKey("sk-secret", option.WithBaseURL(srv.URL), option.WithMaxRetries(0))
+			if tt.want == "" && err != nil {
+				t.Fatalf("validateKey() error = %v", err)
+			}
+			if tt.want != "" && (err == nil || err.Error() != tt.want) {
+				t.Fatalf("validateKey() error = %v, want %q", err, tt.want)
+			}
+			if err != nil && strings.Contains(err.Error(), "sk-secret") {
+				t.Fatalf("validateKey() exposed credential: %v", err)
+			}
+		})
+	}
+}

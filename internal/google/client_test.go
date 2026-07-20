@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dicedatalore/oolong/internal/openai"
 )
@@ -98,5 +99,63 @@ func TestThinkingLevel(t *testing.T) {
 		if got := string(thinkingLevel(effort)); got != want {
 			t.Errorf("thinkingLevel(%q) = %q, want %q", effort, got, want)
 		}
+	}
+}
+
+func TestValidateKey(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"valid", http.StatusOK, `{"models":[]}`, ""},
+		{"unauthorized hides key", http.StatusUnauthorized, `{"error":{"code":401,"message":"bad AIza-secret","status":"UNAUTHENTICATED"}}`, "invalid Google API key"},
+		{"server error", http.StatusInternalServerError, `{"error":{"code":500,"message":"down","status":"INTERNAL"}}`, "google: down"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				fmt.Fprint(w, tt.body)
+			}))
+			defer srv.Close()
+			err := validateKey("AIza-secret", srv.URL)
+			if tt.want == "" && err != nil {
+				t.Fatalf("validateKey() error = %v", err)
+			}
+			if tt.want != "" && (err == nil || err.Error() != tt.want) {
+				t.Fatalf("validateKey() error = %v, want %q", err, tt.want)
+			}
+			if err != nil && strings.Contains(err.Error(), "AIza-secret") {
+				t.Fatalf("validateKey() exposed credential: %v", err)
+			}
+		})
+	}
+}
+
+func TestStreamChatCancel(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan openai.StreamEvent)
+	go New("test", WithBaseURL(srv.URL)).StreamChat(ctx, "gemini-test", nil, openai.Options{}, ch)
+	<-started
+	cancel()
+	select {
+	case ev, ok := <-ch:
+		if ok {
+			t.Fatalf("event after cancellation = %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not close after cancellation")
 	}
 }

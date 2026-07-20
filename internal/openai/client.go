@@ -222,10 +222,17 @@ func apiError(err error) error {
 // and spends no tokens. The API's own 401 message can echo the key back, so
 // it is replaced with a generic error.
 func ValidateKey(key string) error {
+	return validateKey(key)
+}
+
+// validateKey accepts SDK options so tests can use a local server. Production
+// callers use ValidateKey, which keeps the real provider endpoint.
+func validateKey(key string, opts ...option.RequestOption) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	client := sdk.NewClient(option.WithAPIKey(key))
+	opts = append([]option.RequestOption{option.WithAPIKey(key)}, opts...)
+	client := sdk.NewClient(opts...)
 	_, err := client.Models.List(ctx)
 	var apierr *sdk.Error
 	if errors.As(err, &apierr) {
