@@ -12,11 +12,11 @@ import (
 // value owned by one Model, so constructing a second UI cannot inherit global
 // style mutations from the first.
 type theme struct {
-	accent, accentDim                            color.Color
-	page, headerBar, header, inputRow, bottomBar lipgloss.Style
-	userLabel, botLabel, userBlock, botBlock     lipgloss.Style
-	help, notice, err                            lipgloss.Style
-	logoFrom, logoTo                             [3]int
+	accent, accentDim                                      color.Color
+	page, headerBar, header, inputRow, composer, bottomBar lipgloss.Style
+	userLabel, botLabel, userBlock, botBlock               lipgloss.Style
+	help, notice, err                                      lipgloss.Style
+	logoFrom, logoTo                                       [3]int
 }
 
 func newTheme(accent, secondaryAccent string) theme {
@@ -49,6 +49,7 @@ func newTheme(accent, secondaryAccent string) theme {
 		headerBar: lipgloss.NewStyle().Padding(0, 0, 1, 2),
 		header:    lipgloss.NewStyle().Foreground(lipgloss.Color("235")).Background(primary).Padding(0, 1),
 		inputRow:  lipgloss.NewStyle(),
+		composer:  lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true, false, false, false).BorderForeground(lipgloss.Color("238")),
 		bottomBar: lipgloss.NewStyle().Padding(1, 0, 0, 2),
 		userLabel: lipgloss.NewStyle().Bold(true).Foreground(primary),
 		botLabel:  lipgloss.NewStyle().Bold(true).Foreground(secondary),

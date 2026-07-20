@@ -564,6 +564,48 @@ func TestConversationWidthCapped(t *testing.T) {
 	}
 }
 
+func TestChatHeaderKeepsModelAndMetadataOnOneRow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	am := seedConversation(enterChat(t, srv)).(Model)
+	plain := ansi.ReplaceAllString(am.chatHeader(), "")
+	lines := strings.Split(strings.TrimSpace(plain), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("chat header has %d content lines, want 1: %q", len(lines), plain)
+	}
+	if !strings.Contains(lines[0], am.chosen) || !strings.Contains(lines[0], "in / 50 out") {
+		t.Errorf("chat header does not keep model and metadata together: %q", plain)
+	}
+}
+
+func TestChatComposerHasTopBoundary(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	am := enterChat(t, srv).(Model)
+	composer := ansi.ReplaceAllString(am.chatComposer(40), "")
+	lines := strings.Split(composer, "\n")
+	if len(lines) < 2 || !strings.Contains(lines[0], "─") {
+		t.Errorf("composer has no top boundary: %q", composer)
+	}
+}
+
+func TestMessageSpacingGroupsPromptWithReply(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	am := enterChat(t, srv).(Model)
+	user := am.renderMessage(openai.Message{Role: "user", Content: "hello"})
+	assistant := am.renderMessage(openai.Message{Role: "assistant", Content: "hi"})
+	if !strings.HasSuffix(user, "\n\n") {
+		t.Error("user prompt does not leave a slight gap before its reply")
+	}
+	if !strings.HasSuffix(assistant, "\n\n\n") {
+		t.Error("assistant reply does not separate completed exchanges")
+	}
+}
+
 func TestAttachFilePickerToggle(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()

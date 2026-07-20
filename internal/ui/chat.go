@@ -99,12 +99,12 @@ func (m Model) msgWidth() int {
 func (m *Model) layoutChat() {
 	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
 	contentHeight := m.height - m.theme.page.GetVerticalFrameSize()
-	headerHeight := 1 + m.theme.headerBar.GetVerticalFrameSize()
+	headerHeight := lipgloss.Height(m.chatHeader())
 	// Size the input before reading its height: with DynamicHeight the
 	// textarea only recomputes its height when its width is set, so the
 	// stale default would leak into the viewport size below.
 	m.input.SetWidth(contentWidth - m.theme.inputRow.GetHorizontalFrameSize() - 4)
-	inputHeight := m.input.Height()
+	inputHeight := m.input.Height() + m.theme.composer.GetVerticalFrameSize()
 	if len(m.pendingImages) > 0 || len(m.pendingFiles) > 0 {
 		inputHeight++ // attachment indicator line above the input
 	}
@@ -193,6 +193,8 @@ func (m *Model) renderMessage(msg openai.Message) string {
 		if msg.Content != "" {
 			block.WriteString("\n" + msg.Content)
 		}
+		// A small gap separates the prompt from its reply. The larger gap
+		// after the assistant block separates completed exchanges.
 		return m.theme.userBlock.Width(m.msgWidth()-4).Render(block.String()) + "\n\n"
 	}
 	rendered := msg.Content
@@ -208,7 +210,7 @@ func (m *Model) renderMessage(msg openai.Message) string {
 		label = m.chosen
 	}
 	return m.theme.botBlock.Width(m.msgWidth()-4).Render(
-		m.theme.botLabel.Render(label)+"\n"+rendered) + "\n\n"
+		m.theme.botLabel.Render(label)+"\n"+rendered) + "\n\n\n"
 }
 
 func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -714,9 +716,9 @@ func formatTokens(n int) string {
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
-// viewChat stacks the header, conversation viewport, input area, and bottom
-// bar into the full chat page.
-func (m Model) viewChat() string {
+// chatHeader keeps the model and its quieter session metadata together in a
+// compact single-row header.
+func (m Model) chatHeader() string {
 	// While streaming, the header includes a live local estimate of the
 	// in-flight request; the server's usage report replaces it on
 	// completion.
@@ -745,7 +747,29 @@ func (m Model) viewChat() string {
 			cost += fmt.Sprintf(" • context %d%%", pct)
 		}
 	}
-	header := m.theme.headerBar.Render(m.theme.header.Render(m.chosen) + m.theme.help.Render("  "+cost) + ctxWarn)
+	return m.theme.headerBar.Render(m.theme.header.Render(m.chosen) +
+		m.theme.help.Render("  "+cost) + ctxWarn)
+}
+
+// chatComposer renders attachment/editing context and the textarea inside a
+// subtle top boundary, keeping input distinct from the transcript.
+func (m Model) chatComposer(contentWidth int) string {
+	inputArea := m.theme.inputRow.Render(m.input.View())
+	if m.editingSystem {
+		inputArea = m.theme.inputRow.Render(m.theme.botLabel.Render("System prompt")) +
+			"\n" + inputArea
+	}
+	if label := m.attachmentLabel(); label != "" {
+		inputArea = m.theme.inputRow.Render(m.theme.help.Render(label+" — sent with next message")) +
+			"\n" + inputArea
+	}
+	return m.theme.composer.Width(contentWidth).Render(inputArea)
+}
+
+// viewChat stacks the header, conversation viewport, input area, and bottom
+// bar into the full chat page.
+func (m Model) viewChat() string {
+	header := m.chatHeader()
 
 	// The bottom bar shows one thing at a time, in order of urgency:
 	// error > spinner > notice > picker/system prompt hints > key help.
@@ -771,15 +795,8 @@ func (m Model) viewChat() string {
 	}
 	bottomBar = m.theme.bottomBar.Render(bottomBar)
 
-	inputArea := m.theme.inputRow.Render(m.input.View())
-	if m.editingSystem {
-		inputArea = m.theme.inputRow.Render(m.theme.botLabel.Render("System prompt")) +
-			"\n" + inputArea
-	}
-	if label := m.attachmentLabel(); label != "" {
-		inputArea = m.theme.inputRow.Render(m.theme.help.Render(label+" — sent with next message")) +
-			"\n" + inputArea
-	}
+	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
+	inputArea := m.chatComposer(contentWidth)
 
 	// The attach-file picker overlays the conversation area.
 	body := m.vp.View()
