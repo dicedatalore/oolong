@@ -210,8 +210,8 @@ func (m Model) keyCard() string {
 	provider := m.keyProvider
 	input := *m.keyInput(provider)
 	// Width applies to the card's content; leave room for its padding, border,
-	// page frame, and the two-space alignment used by the tabs above it.
-	width := min(56, max(20, m.width-m.theme.page.GetHorizontalFrameSize()-8))
+	// and the surrounding page frame.
+	width := min(56, max(20, m.width-m.theme.page.GetHorizontalFrameSize()-6))
 	input.SetWidth(width - 4)
 
 	description := "Paste a new key below. It will be validated before it is saved."
@@ -226,18 +226,28 @@ func (m Model) keyCard() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.accentDim).
 		Padding(1, 2).
-		MarginLeft(2).
 		Render(body)
 }
 
 func (m Model) viewKeyManager() string {
+	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
+	contentHeight := m.height - m.theme.page.GetVerticalFrameSize()
+
 	header := m.theme.headerBar.Render(m.theme.header.Render("API keys"))
-	body := "  " + m.keyProviderTabs() + "\n\n" + m.keyCard()
+	content := header + "\n" + m.keyProviderTabs() + "\n\n" + m.keyCard()
+	// Keep every line aligned to the widest part of the manager when the
+	// whole block is centered; otherwise Place centers each line separately.
+	content = lipgloss.NewStyle().Width(lipgloss.Width(content)).Render(content)
+
 	bottom := m.theme.help.Render("←/→ or tab: provider • enter: verify & save • ctrl+d: remove saved key • esc: back")
 	if m.keyValidating {
 		bottom = m.spin.View() + m.theme.help.Render("validating "+providerName(m.keyProvider)+" key…")
 	} else if m.keyErr != "" {
 		bottom = m.theme.err.Render(m.keyErr)
 	}
-	return m.theme.page.Render(header + "\n" + body + "\n" + m.theme.bottomBar.Render(bottom))
+
+	centered := lipgloss.Place(contentWidth, contentHeight-lipgloss.Height(bottom),
+		lipgloss.Center, lipgloss.Center, content)
+	return m.theme.page.Render(centered + "\n" +
+		lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, bottom))
 }

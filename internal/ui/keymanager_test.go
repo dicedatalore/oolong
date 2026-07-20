@@ -178,6 +178,35 @@ func TestKeyManagerCardBordersAlign(t *testing.T) {
 	}
 }
 
+func TestKeyManagerContentIsCenteredWithHelpAtBottom(t *testing.T) {
+	model := newKeyManagerModel(t)
+	am := model.(Model)
+	plain := ansi.ReplaceAllString(am.viewKeyManager(), "")
+	lines := strings.Split(plain, "\n")
+
+	cardLine, helpLine := -1, -1
+	for i, line := range lines {
+		if strings.Contains(line, "╭") {
+			cardLine = i
+		}
+		if strings.Contains(line, "verify & save") {
+			helpLine = i
+		}
+	}
+	if cardLine < 0 || helpLine < 0 {
+		t.Fatalf("missing card or help line:\n%s", plain)
+	}
+	line := lines[cardLine]
+	lead := len(line) - len(strings.TrimLeft(line, " "))
+	trail := len(line) - len(strings.TrimRight(line, " "))
+	if diff := lead - trail; diff < -1 || diff > 1 {
+		t.Errorf("card is not centered: %d leading vs %d trailing spaces", lead, trail)
+	}
+	if helpLine <= cardLine || len(lines)-helpLine > 3 {
+		t.Errorf("help line %d is not pinned below the card near the bottom of %d lines", helpLine, len(lines))
+	}
+}
+
 func builtinProviderCount(provider string) int {
 	count := 0
 	for _, model := range config.DefaultModels {
