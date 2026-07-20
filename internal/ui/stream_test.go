@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 // pumpStream feeds every event from the in-flight stream through Update,
@@ -92,7 +92,7 @@ func TestStaleStreamEventIgnoredAfterRestart(t *testing.T) {
 
 	// A stale done event must not cancel the new stream or book usage.
 	model, _ = model.Update(streamEventMsg{
-		StreamEvent: openai.StreamEvent{Done: true, Usage: openai.Usage{InputTokens: 9, OutputTokens: 9}},
+		StreamEvent: chat.StreamEvent{Done: true, Usage: chat.Usage{InputTokens: 9, OutputTokens: 9}},
 		ch:          oldCh,
 	})
 	am = model.(Model)

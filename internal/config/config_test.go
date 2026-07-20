@@ -41,6 +41,7 @@ simple_picker = true
 
 [[models]]
 id = "gpt-5.4"
+provider = "openai"
 description = "Previous generation"
 input_rate = 1.25
 output_rate = 10.00
@@ -106,6 +107,20 @@ verbosity = "low"
 			},
 		},
 		{
+			name: "custom model requires provider",
+			data: `
+[[models]]
+id = "custom-model"
+`,
+			wantErr: "model custom-model has no provider",
+			check: func(c Config) string {
+				if c.CustomCatalog() {
+					return "providerless custom model kept"
+				}
+				return ""
+			},
+		},
+		{
 			name: "model without id dropped, rest kept",
 			data: `
 [[models]]
@@ -113,6 +128,7 @@ description = "no id"
 
 [[models]]
 id = "gpt-5.4"
+provider = "openai"
 `,
 			wantErr: "without an id",
 			check: func(c Config) string {
@@ -144,6 +160,7 @@ input_rate = -1.0
 			data: `
 [[models]]
 id = "gpt-5.7-nova"
+provider = "openai"
 reasoning_effort = "galactic"
 verbosity = "chatty"
 `,
@@ -161,6 +178,7 @@ verbosity = "chatty"
 			name: "base_url global and per-model",
 			data: `
 base_url = "http://localhost:11434/v1"
+provider = "openai"
 
 [[models]]
 id = "llama3.3"
@@ -248,6 +266,7 @@ provider = "anthropic"
 			data: `
 [[models]]
 id = "llama3.3"
+provider = "openai"
 base_url = "not a url"
 `,
 			wantErr: `model llama3.3 base_url`,
@@ -291,6 +310,7 @@ default_model = "gpt-5.4"
 
 [[models]]
 id = "gpt-5.4"
+provider = "openai"
 `,
 			check: func(c Config) string {
 				if c.DefaultModel != "gpt-5.4" {

@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 type Client struct {
@@ -48,9 +48,9 @@ type chunk struct {
 	Error           string `json:"error"`
 }
 
-func (c *Client) StreamChat(ctx context.Context, model string, messages []openai.Message, opts openai.Options, ch chan<- openai.StreamEvent) {
+func (c *Client) StreamChat(ctx context.Context, model string, messages []chat.Message, opts chat.Options, ch chan<- chat.StreamEvent) {
 	defer close(ch)
-	emit := func(ev openai.StreamEvent) bool {
+	emit := func(ev chat.StreamEvent) bool {
 		select {
 		case ch <- ev:
 			return true
@@ -76,19 +76,19 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []openai
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		emit(openai.StreamEvent{Err: err})
+		emit(chat.StreamEvent{Err: err})
 		return
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
-		emit(openai.StreamEvent{Err: err})
+		emit(chat.StreamEvent{Err: err})
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() == nil {
-			emit(openai.StreamEvent{Err: fmt.Errorf("ollama: %w", err)})
+			emit(chat.StreamEvent{Err: fmt.Errorf("ollama: %w", err)})
 		}
 		return
 	}
@@ -102,7 +102,7 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []openai
 		if e.Error == "" {
 			e.Error = http.StatusText(resp.StatusCode)
 		}
-		emit(openai.StreamEvent{Err: fmt.Errorf("ollama: %s", e.Error)})
+		emit(chat.StreamEvent{Err: fmt.Errorf("ollama: %s", e.Error)})
 		return
 	}
 	scanner := bufio.NewScanner(resp.Body)
@@ -110,31 +110,31 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []openai
 	for scanner.Scan() {
 		var part chunk
 		if err := json.Unmarshal(scanner.Bytes(), &part); err != nil {
-			emit(openai.StreamEvent{Err: fmt.Errorf("ollama: invalid stream: %w", err)})
+			emit(chat.StreamEvent{Err: fmt.Errorf("ollama: invalid stream: %w", err)})
 			return
 		}
 		if part.Error != "" {
-			emit(openai.StreamEvent{Err: fmt.Errorf("ollama: %s", part.Error)})
+			emit(chat.StreamEvent{Err: fmt.Errorf("ollama: %s", part.Error)})
 			return
 		}
-		if part.Message.Content != "" && !emit(openai.StreamEvent{Delta: part.Message.Content}) {
+		if part.Message.Content != "" && !emit(chat.StreamEvent{Delta: part.Message.Content}) {
 			return
 		}
 		if part.Done {
-			emit(openai.StreamEvent{Done: true, Usage: openai.Usage{InputTokens: part.PromptEvalCount, OutputTokens: part.EvalCount}})
+			emit(chat.StreamEvent{Done: true, Usage: chat.Usage{InputTokens: part.PromptEvalCount, OutputTokens: part.EvalCount}})
 			return
 		}
 	}
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
-		emit(openai.StreamEvent{Err: fmt.Errorf("ollama: %w", err)})
+		emit(chat.StreamEvent{Err: fmt.Errorf("ollama: %w", err)})
 		return
 	}
 	if ctx.Err() == nil {
-		emit(openai.StreamEvent{Err: fmt.Errorf("ollama: stream ended before completion")})
+		emit(chat.StreamEvent{Err: fmt.Errorf("ollama: stream ended before completion")})
 	}
 }
 
-func fileBlock(f openai.File) string {
+func fileBlock(f chat.File) string {
 	fence := "```"
 	for strings.Contains(f.Text, fence) {
 		fence += "`"

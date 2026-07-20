@@ -12,8 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/config"
-	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 func TestChatMultilineInput(t *testing.T) {
@@ -164,7 +164,7 @@ func TestSystemPromptEditing(t *testing.T) {
 // seedConversation puts a small finished conversation on the model.
 func seedConversation(model tea.Model) tea.Model {
 	am := model.(Model)
-	am.messages = []openai.Message{
+	am.messages = []chat.Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi", Model: am.chosen},
 	}
@@ -288,7 +288,7 @@ func TestUpDownCyclesSentMessages(t *testing.T) {
 
 	model := enterChat(t, srv)
 	am := model.(Model)
-	am.messages = []openai.Message{
+	am.messages = []chat.Message{
 		{Role: "user", Content: "first", Images: [][]byte{{1}}},
 		{Role: "assistant", Content: "ok", Model: am.chosen},
 		{Role: "user", Content: "second"},
@@ -596,8 +596,8 @@ func TestMessageSpacingGroupsPromptWithReply(t *testing.T) {
 	defer srv.Close()
 
 	am := enterChat(t, srv).(Model)
-	user := am.renderMessage(openai.Message{Role: "user", Content: "hello"})
-	assistant := am.renderMessage(openai.Message{Role: "assistant", Content: "hi"})
+	user := am.renderMessage(chat.Message{Role: "user", Content: "hello"})
+	assistant := am.renderMessage(chat.Message{Role: "assistant", Content: "hi"})
 	if !strings.HasSuffix(user, "\n\n") {
 		t.Error("user prompt does not leave a slight gap before its reply")
 	}
@@ -700,7 +700,7 @@ func TestContextMeterInHeader(t *testing.T) {
 
 	// 1.28M chars ≈ 320k tokens = 80% of the window: the meter becomes a
 	// warning.
-	am.messages = []openai.Message{{Role: "user", Content: strings.Repeat("a", 1_280_000)}}
+	am.messages = []chat.Message{{Role: "user", Content: strings.Repeat("a", 1_280_000)}}
 	if v := am.viewChat(); !strings.Contains(v, "context 80% full") {
 		t.Error("header missing the near-full warning at 80%")
 	}
@@ -708,7 +708,7 @@ func TestContextMeterInHeader(t *testing.T) {
 	// A model with no known window shows no meter.
 	cfg := config.Config{
 		DefaultModel: "mystery",
-		Models:       []config.Model{{ID: "mystery"}},
+		Models:       []config.Model{{ID: "mystery", Provider: "openai"}},
 	}
 	model = newCustomModel(t, srv, cfg)
 	if v := model.(Model).viewChat(); strings.Contains(v, "context ") {

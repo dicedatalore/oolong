@@ -39,9 +39,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
+	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
-	"github.com/dicedatalore/oolong/internal/openai"
 	providerroute "github.com/dicedatalore/oolong/internal/provider"
 )
 
@@ -72,7 +72,7 @@ type Model struct {
 	transcriptDir  string // transcript_dir from config; the env var wins
 
 	// Clients are cached by resolved provider and endpoint.
-	clients map[string]openai.ChatClient
+	clients map[string]chat.Client
 
 	// model picker
 	picker       list.Model
@@ -86,7 +86,7 @@ type Model struct {
 	help     help.Model
 	keys     chatKeyMap
 	renderer *glamour.TermRenderer // markdown renderer, rebuilt on resize
-	messages []openai.Message
+	messages []chat.Message
 	// msgCache[i] is messages[i] rendered at cacheWidth. Completed messages
 	// render once; only the streaming message re-renders per delta.
 	msgCache   []string
@@ -95,11 +95,11 @@ type Model struct {
 	errText    string
 
 	// in-flight response stream (see stream.go)
-	stream        <-chan openai.StreamEvent
+	stream        <-chan chat.StreamEvent
 	cancelStream  context.CancelFunc
-	streaming     bool          // an in-progress assistant message is the last element of messages
-	pendingImages [][]byte      // pasted/attached images sent with the next message
-	pendingFiles  []openai.File // text files attached from disk, sent with the next message
+	streaming     bool        // an in-progress assistant message is the last element of messages
+	pendingImages [][]byte    // pasted/attached images sent with the next message
+	pendingFiles  []chat.File // text files attached from disk, sent with the next message
 
 	// attach-file picker (ctrl+f overlays the conversation)
 	filePicker  filepicker.Model
@@ -107,10 +107,10 @@ type Model struct {
 
 	// ↑/↓ history recall: the composer steps through previously sent
 	// messages while it holds an unedited recall (see recallActive).
-	recallIdx         int           // index into messages of the recalled message; -1 when none
-	recallText        string        // the text recallIdx was recalled as, to detect edits
-	recallSavedImages [][]byte      // pendingImages stashed when recall started
-	recallSavedFiles  []openai.File // pendingFiles stashed when recall started
+	recallIdx         int         // index into messages of the recalled message; -1 when none
+	recallText        string      // the text recallIdx was recalled as, to detect edits
+	recallSavedImages [][]byte    // pendingImages stashed when recall started
+	recallSavedFiles  []chat.File // pendingFiles stashed when recall started
 
 	// system prompt editing (ctrl+p repurposes the chat input)
 	systemPrompt  string
@@ -150,11 +150,17 @@ type Model struct {
 
 // New builds the initial model. The picker remains available without keys and
 // points to the key manager; cfgErr is surfaced without blocking launch.
-func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr string) Model {
+func New(client chat.Client, mdStyle string, cfg config.Config, cfgErr string) Model {
 	resolver := providerroute.NewResolver(cfg)
 	if client != nil {
-		globalRoute := resolver.RouteFor("")
-		injectedProvider, _ := providerroute.KeyProvider(resolver.RouteFor("").Provider)
+		// New's injected client stands in for the configured provider's global
+		// route. Per-model endpoints must still construct their own client.
+		injectedProviderName := providerroute.Name(cfg.Provider)
+		if injectedProviderName == "" {
+			injectedProviderName = resolver.RouteFor(resolver.FirstAvailableModel()).Provider
+		}
+		injectedRoute := providerroute.Route{Provider: injectedProviderName, BaseURL: cfg.BaseURL}
+		injectedProvider, _ := providerroute.KeyProvider(injectedProviderName)
 		resolveKey := resolver.ResolveKey
 		resolver.ResolveKey = func(provider keystore.Provider) string {
 			if provider == injectedProvider {
@@ -163,8 +169,8 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 			return resolveKey(provider)
 		}
 		build := resolver.BuildClient
-		resolver.BuildClient = func(route providerroute.Route, key string) openai.ChatClient {
-			if route.Provider == globalRoute.Provider && route.BaseURL == globalRoute.BaseURL {
+		resolver.BuildClient = func(route providerroute.Route, key string) chat.Client {
+			if route.Provider == injectedRoute.Provider && route.BaseURL == injectedRoute.BaseURL {
 				return client
 			}
 			return build(route, key)
@@ -224,14 +230,14 @@ func newModel(resolver *providerroute.Resolver, mdStyle string, cfg config.Confi
 }
 
 // clientFor returns the cached client for a fully resolved model route.
-func (m *Model) clientFor(id string) openai.ChatClient {
+func (m *Model) clientFor(id string) chat.Client {
 	route := m.resolver.RouteFor(id)
 	cacheKey := string(route.Provider) + "\x00" + route.BaseURL
 	if c, ok := m.clients[cacheKey]; ok {
 		return c
 	}
 	if m.clients == nil {
-		m.clients = make(map[string]openai.ChatClient)
+		m.clients = make(map[string]chat.Client)
 	}
 	c := m.resolver.ClientFor(id)
 	if c == nil {

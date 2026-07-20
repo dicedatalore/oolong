@@ -1,7 +1,7 @@
 package ui
 
 // Streaming a reply is a loop between a background goroutine and Update:
-// startStream launches openai.StreamChat on a goroutine that writes events
+// startStream launches chat.StreamChat on a goroutine that writes events
 // to a channel, and readStream is a tea.Cmd that receives ONE event and
 // delivers it to Update as a streamEventMsg. handleStreamEvent applies the
 // event and issues readStream again, so events arrive one message at a time
@@ -15,34 +15,34 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 // streamEventMsg carries one event from an in-flight stream, tagged with the
 // channel it came from so an event queued by an already-abandoned stream can
 // be told apart from the current one and dropped.
 type streamEventMsg struct {
-	openai.StreamEvent
-	ch <-chan openai.StreamEvent
+	chat.StreamEvent
+	ch <-chan chat.StreamEvent
 }
 
 // startStream kicks off a streaming completion for the current transcript
 // (prefixed with the system prompt, if set) and returns the command that
 // waits for the first event.
 func (m *Model) startStream() tea.Cmd {
-	history := make([]openai.Message, 0, len(m.messages)+1)
+	history := make([]chat.Message, 0, len(m.messages)+1)
 	if m.systemPrompt != "" {
-		history = append(history, openai.Message{Role: "system", Content: m.systemPrompt})
+		history = append(history, chat.Message{Role: "system", Content: m.systemPrompt})
 	}
 	history = append(history, m.messages...)
 	m.estInputTokens = estimateTokens(m.transcriptChars())
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan openai.StreamEvent)
+	ch := make(chan chat.StreamEvent)
 	m.stream = ch
 	m.cancelStream = cancel
 	m.streaming = false
 	cm := m.modelConfig(m.chosen)
-	opts := openai.Options{
+	opts := chat.Options{
 		ReasoningEffort: cm.ReasoningEffort,
 		Verbosity:       cm.Verbosity,
 	}
@@ -53,7 +53,7 @@ func (m *Model) startStream() tea.Cmd {
 // readStream waits for the next event from the in-flight stream. It is
 // re-issued from handleStreamEvent after each delta so events arrive one
 // per message.
-func readStream(ch <-chan openai.StreamEvent) tea.Cmd {
+func readStream(ch <-chan chat.StreamEvent) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-ch
 		if !ok {
@@ -160,7 +160,7 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 		// First delta: append the assistant message the deltas build up in.
 		if !m.streaming {
 			m.streaming = true
-			m.messages = append(m.messages, openai.Message{Role: "assistant", Model: m.chosen})
+			m.messages = append(m.messages, chat.Message{Role: "assistant", Model: m.chosen})
 		}
 		m.messages[len(m.messages)-1].Content += msg.Delta
 		// Keep following the newest text only if the user hasn't scrolled up.

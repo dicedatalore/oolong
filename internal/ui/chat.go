@@ -23,9 +23,9 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
 
+	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/clipboard"
 	"github.com/dicedatalore/oolong/internal/mathfmt"
-	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 func newChatInput(theme theme) textarea.Model {
@@ -180,7 +180,7 @@ func (m *Model) conversationView() string {
 }
 
 // renderMessage renders one message to its on-screen block.
-func (m *Model) renderMessage(msg openai.Message) string {
+func (m *Model) renderMessage(msg chat.Message) string {
 	if msg.Role == "user" {
 		var block strings.Builder
 		block.WriteString(m.theme.userLabel.Render("You"))
@@ -414,7 +414,7 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errText = ""
 			m.chatNotice = ""
 			m.help.ShowAll = false
-			m.messages = append(m.messages, openai.Message{Role: "user", Content: text, Images: m.pendingImages, Files: m.pendingFiles})
+			m.messages = append(m.messages, chat.Message{Role: "user", Content: text, Images: m.pendingImages, Files: m.pendingFiles})
 			m.pendingImages = nil
 			m.pendingFiles = nil
 			m.clearRecall()
@@ -613,7 +613,7 @@ func (m *Model) attachPath(path string) {
 			m.chatNotice = name + " is neither an image nor text"
 			return
 		}
-		m.pendingFiles = append(m.pendingFiles, openai.File{Name: name, Text: string(data)})
+		m.pendingFiles = append(m.pendingFiles, chat.File{Name: name, Text: string(data)})
 		m.chatNotice = "attached " + name
 	}
 }

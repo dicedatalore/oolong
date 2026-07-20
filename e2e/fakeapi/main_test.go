@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
+	"github.com/dicedatalore/oolong/internal/chat"
 	providergoogle "github.com/dicedatalore/oolong/internal/google"
-	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 func TestGeminiFakeMatchesSDK(t *testing.T) {
@@ -26,11 +26,11 @@ func TestGeminiFakeMatchesSDK(t *testing.T) {
 	defer server.Close()
 
 	client := providergoogle.New("AIza-test", providergoogle.WithBaseURL(server.URL))
-	stream := make(chan openai.StreamEvent)
+	stream := make(chan chat.StreamEvent)
 	go client.StreamChat(context.Background(), "gemini-3.5-flash",
-		[]openai.Message{{Role: "user", Content: "hello fake"}}, openai.Options{}, stream)
+		[]chat.Message{{Role: "user", Content: "hello fake"}}, chat.Options{}, stream)
 	var text string
-	var usage openai.Usage
+	var usage chat.Usage
 	for event := range stream {
 		if event.Err != nil {
 			t.Fatal(event.Err)
@@ -68,11 +68,11 @@ func TestAnthropicFakeMatchesSDK(t *testing.T) {
 	defer server.Close()
 
 	client := provideranthropic.New("sk-ant-test", provideranthropic.WithBaseURL(server.URL))
-	stream := make(chan openai.StreamEvent)
+	stream := make(chan chat.StreamEvent)
 	go client.StreamChat(context.Background(), "claude-sonnet-5",
-		[]openai.Message{{Role: "user", Content: "hello fake"}}, openai.Options{}, stream)
+		[]chat.Message{{Role: "user", Content: "hello fake"}}, chat.Options{}, stream)
 	var text string
-	var usage openai.Usage
+	var usage chat.Usage
 	for event := range stream {
 		if event.Err != nil {
 			t.Fatal(event.Err)

@@ -12,7 +12,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 func sse(w io.Writer, event, data string) {
@@ -34,15 +34,15 @@ func TestStreamChat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	messages := []openai.Message{
+	messages := []chat.Message{
 		{Role: "system", Content: "Be concise."},
-		{Role: "user", Content: "hello", Files: []openai.File{{Name: "a.txt", Text: "text"}}, Images: [][]byte{{1, 2, 3}}},
+		{Role: "user", Content: "hello", Files: []chat.File{{Name: "a.txt", Text: "text"}}, Images: [][]byte{{1, 2, 3}}},
 	}
 	client := New("sk-ant-test", option.WithBaseURL(srv.URL), option.WithMaxRetries(0))
-	ch := make(chan openai.StreamEvent)
-	go client.StreamChat(context.Background(), "claude-test", messages, openai.Options{ReasoningEffort: "high"}, ch)
+	ch := make(chan chat.StreamEvent)
+	go client.StreamChat(context.Background(), "claude-test", messages, chat.Options{ReasoningEffort: "high"}, ch)
 	var got string
-	var usage openai.Usage
+	var usage chat.Usage
 	for event := range ch {
 		if event.Err != nil {
 			t.Fatal(event.Err)
@@ -82,8 +82,8 @@ func TestStreamAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 	client := New("bad", option.WithBaseURL(srv.URL), option.WithMaxRetries(0))
-	ch := make(chan openai.StreamEvent)
-	go client.StreamChat(context.Background(), "claude-test", nil, openai.Options{}, ch)
+	ch := make(chan chat.StreamEvent)
+	go client.StreamChat(context.Background(), "claude-test", nil, chat.Options{}, ch)
 	event := <-ch
 	if event.Err == nil || event.Err.Error() != "anthropic: bad key" {
 		t.Errorf("err = %v", event.Err)
@@ -134,8 +134,8 @@ func TestStreamChatCancel(t *testing.T) {
 	}))
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan openai.StreamEvent)
-	go New("test", option.WithBaseURL(srv.URL), option.WithMaxRetries(0)).StreamChat(ctx, "claude-test", nil, openai.Options{}, ch)
+	ch := make(chan chat.StreamEvent)
+	go New("test", option.WithBaseURL(srv.URL), option.WithMaxRetries(0)).StreamChat(ctx, "claude-test", nil, chat.Options{}, ch)
 	<-started
 	cancel()
 	select {

@@ -40,7 +40,7 @@ type Config struct {
 	SecondaryAccent string  `toml:"secondary_accent"` // secondary accent color, "#RRGGBB"
 	SimplePicker    bool    `toml:"simple_picker"`    // start the model picker in its simple view
 	BaseURL         string  `toml:"base_url"`         // optional provider endpoint for every model
-	Provider        string  `toml:"provider"`         // blank preserves the OpenAI default
+	Provider        string  `toml:"provider"`         // optional default inherited by models without one
 	Models          []Model `toml:"models"`           // replaces the built-in catalog when present
 }
 
@@ -219,6 +219,10 @@ func parse(data string) (Config, error) {
 		drop("provider %q is not supported", c.Provider)
 		c.Provider = ""
 	}
+	if c.BaseURL != "" && c.Provider == "" {
+		drop("base_url requires an explicit provider")
+		c.BaseURL = ""
+	}
 	models := c.Models[:0]
 	for _, m := range c.Models {
 		switch {
@@ -239,6 +243,10 @@ func parse(data string) (Config, error) {
 		if m.Provider != "" && !validProvider(m.Provider) {
 			drop("model %s provider %q is not supported", m.ID, m.Provider)
 			m.Provider = ""
+		}
+		if m.Provider == "" && c.Provider == "" {
+			drop("model %s has no provider", m.ID)
+			continue
 		}
 		models = append(models, m)
 	}

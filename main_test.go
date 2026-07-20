@@ -24,6 +24,8 @@ func TestRunEarlyCommands(t *testing.T) {
 		{"resume with one shot", []string{"--resume", "chat.md", "hello"}, 2, "", "--resume opens the TUI"},
 		{"help", []string{"--help"}, 0, "", "Usage:"},
 		{"bad flag", []string{"--wat"}, 2, "", "flag provided but not defined"},
+		{"provider without model", []string{"--provider", "anthropic"}, 2, "", "--provider requires --model"},
+		{"unknown provider", []string{"--model", "x", "--provider", "unknown"}, 2, "", `unsupported provider "unknown"`},
 	}
 	oldVersion := version.Version
 	version.Version = "test-version"

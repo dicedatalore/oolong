@@ -9,8 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/config"
-	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 func TestTranscriptRoundTrip(t *testing.T) {
@@ -20,10 +20,10 @@ func TestTranscriptRoundTrip(t *testing.T) {
 	model := enterChat(t, srv)
 	am := model.(Model)
 	am.systemPrompt = "be brief\nand kind"
-	am.messages = []openai.Message{
+	am.messages = []chat.Message{
 		{Role: "user", Content: "show me a heading"},
 		{Role: "assistant", Model: "model --> arbitrary", Content: "## Sure\n\n```md\n## fenced heading\n```\n\n<!--oolong: exact -->"},
-		{Role: "user", Content: "thanks", Images: [][]byte{{1, 2, 3}}, Files: []openai.File{{Name: "a.txt", Text: "contents"}}},
+		{Role: "user", Content: "thanks", Images: [][]byte{{1, 2, 3}}, Files: []chat.File{{Name: "a.txt", Text: "contents"}}},
 	}
 
 	got, err := parseTranscript(am.transcriptMarkdown())
@@ -57,7 +57,7 @@ func TestResumeOpensChatWithConversation(t *testing.T) {
 	tr := Transcript{
 		Model:  "gpt-5.6-terra",
 		System: "be brief",
-		Messages: []openai.Message{
+		Messages: []chat.Message{
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi", Model: "gpt-5.6-terra"},
 		},

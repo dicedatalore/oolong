@@ -57,6 +57,7 @@ func runWith(argv []string, deps dependencies) int {
 	resetKey := flags.Bool("reset-key", false, "delete stored API keys from the OS keychain and exit")
 	showVersion := flags.Bool("version", false, "print the version and exit")
 	model := flags.String("model", "", "open a chat with this model id, skipping the picker")
+	providerName := flags.String("provider", "", "provider for a --model not listed in the catalog")
 	resume := flags.String("resume", "", "resume a conversation from a transcript saved with ctrl+s")
 	flags.Usage = func() {
 		fmt.Fprint(deps.stderr, `Usage:
@@ -107,6 +108,19 @@ Flags:
 	// A bad config file must never block launch: Load always returns a
 	// usable config, and the error surfaces as a notice inside the UI.
 	cfg, cfgErr := deps.loadConfig()
+	if *providerName != "" {
+		if *model == "" {
+			fmt.Fprintln(deps.stderr, "--provider requires --model")
+			return 2
+		}
+		switch provider.Name(*providerName) {
+		case provider.OpenAI, provider.Anthropic, provider.Google, provider.Ollama:
+			cfg.Provider = *providerName
+		default:
+			fmt.Fprintf(deps.stderr, "unsupported provider %q\n", *providerName)
+			return 2
+		}
+	}
 	if *model != "" {
 		cfg.DefaultModel = *model
 	}

@@ -15,16 +15,12 @@ import (
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
+
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 type Client struct {
 	api sdk.Client
-}
-
-// ChatClient is the provider-neutral streaming surface used by the TUI and
-// one-shot mode. Provider packages implement it independently.
-type ChatClient interface {
-	StreamChat(context.Context, string, []Message, Options, chan<- StreamEvent)
 }
 
 func New(apiKey string, opts ...option.RequestOption) *Client {
@@ -45,49 +41,13 @@ func WithBaseURL(url string) option.RequestOption {
 	return option.WithBaseURL(url)
 }
 
-type Message struct {
-	Role    string   `json:"role"`
-	Content string   `json:"content"`
-	Model   string   `json:"model,omitempty"`  // assistant messages: model that produced the reply
-	Images  [][]byte `json:"images,omitempty"` // image attachments, user messages only
-	Files   []File   `json:"files,omitempty"`  // text-file attachments, user messages only
-}
-
-// File is a text file attached to a user message; it is sent to the model
-// as its own content block alongside the message text.
-type File struct {
-	Name string `json:"name"`
-	Text string `json:"text"`
-}
-
-type Usage struct {
-	InputTokens  int
-	OutputTokens int
-}
-
-// StreamEvent is one item of a streamed reply: a content delta, a terminal
-// done event carrying usage, or a terminal error.
-type StreamEvent struct {
-	Delta string
-	Usage Usage
-	Done  bool
-	Err   error
-}
-
-// Options tunes a StreamChat request. Zero values omit the parameter, which
-// leaves the server default in effect.
-type Options struct {
-	ReasoningEffort string // reasoning.effort: none|minimal|low|medium|high
-	Verbosity       string // text.verbosity: low|medium|high
-}
-
 // StreamChat streams a model response, sending one StreamEvent per content
 // delta on ch, terminated by a done or err event. It closes ch on return and
 // aborts (without a terminal event) if ctx is cancelled.
-func (c *Client) StreamChat(ctx context.Context, model string, messages []Message, opts Options, ch chan<- StreamEvent) {
+func (c *Client) StreamChat(ctx context.Context, model string, messages []chat.Message, opts chat.Options, ch chan<- chat.StreamEvent) {
 	defer close(ch)
 
-	emit := func(ev StreamEvent) bool {
+	emit := func(ev chat.StreamEvent) bool {
 		select {
 		case ch <- ev:
 			return true
@@ -134,16 +94,16 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []Messag
 	stream := c.api.Responses.NewStreaming(ctx, params)
 	defer stream.Close()
 
-	var usage Usage
+	var usage chat.Usage
 	for stream.Next() {
 		ev := stream.Current()
 		switch ev.Type {
 		case "response.output_text.delta":
-			if ev.Delta != "" && !emit(StreamEvent{Delta: ev.Delta}) {
+			if ev.Delta != "" && !emit(chat.StreamEvent{Delta: ev.Delta}) {
 				return
 			}
 		case "response.completed":
-			usage = Usage{
+			usage = chat.Usage{
 				InputTokens:  int(ev.Response.Usage.InputTokens),
 				OutputTokens: int(ev.Response.Usage.OutputTokens),
 			}
@@ -157,23 +117,23 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []Messag
 					msg += ": " + reason
 				}
 			}
-			emit(StreamEvent{Err: fmt.Errorf("openai: %s", msg)})
+			emit(chat.StreamEvent{Err: fmt.Errorf("openai: %s", msg)})
 			return
 		case "error":
-			emit(StreamEvent{Err: fmt.Errorf("openai: %s", ev.Message)})
+			emit(chat.StreamEvent{Err: fmt.Errorf("openai: %s", ev.Message)})
 			return
 		}
 	}
 	if err := stream.Err(); err != nil {
-		emit(StreamEvent{Err: apiError(err)})
+		emit(chat.StreamEvent{Err: apiError(err)})
 		return
 	}
-	emit(StreamEvent{Done: true, Usage: usage})
+	emit(chat.StreamEvent{Done: true, Usage: usage})
 }
 
 // fileBlock renders a text attachment as its own content block: a name line
 // and a fenced body, the fence grown past any backtick run in the content.
-func fileBlock(f File) string {
+func fileBlock(f chat.File) string {
 	fence := "```"
 	for strings.Contains(f.Text, fence) {
 		fence += "`"

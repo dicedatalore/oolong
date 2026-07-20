@@ -4,9 +4,11 @@
 package provider
 
 import (
+	"fmt"
 	"os"
 
 	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
+	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/config"
 	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
@@ -38,7 +40,7 @@ type Resolver struct {
 	Config      config.Config
 	Getenv      func(string) string
 	ResolveKey  func(keystore.Provider) string
-	BuildClient func(Route, string) openai.ChatClient
+	BuildClient func(Route, string) chat.Client
 }
 
 func NewResolver(cfg config.Config) *Resolver {
@@ -73,9 +75,6 @@ func (r *Resolver) RouteFor(id string) Route {
 		model.ID = id
 	}
 	globalProvider := Name(r.Config.Provider)
-	if globalProvider == "" {
-		globalProvider = OpenAI
-	}
 	provider := Name(model.Provider)
 	if provider == "" {
 		provider = globalProvider
@@ -122,7 +121,7 @@ func (r *Resolver) Available(route Route) bool {
 	return route.Provider == OpenAI && config.CustomEndpoint(route.BaseURL)
 }
 
-func (r *Resolver) ClientFor(id string) openai.ChatClient {
+func (r *Resolver) ClientFor(id string) chat.Client {
 	route := r.RouteFor(id)
 	if !r.Available(route) {
 		return nil
@@ -139,8 +138,13 @@ func (r *Resolver) ClientFor(id string) openai.ChatClient {
 }
 
 // NewClient constructs a client for an already-resolved route.
-func NewClient(route Route, key string) openai.ChatClient {
+func NewClient(route Route, key string) chat.Client {
 	switch route.Provider {
+	case OpenAI:
+		if route.BaseURL != "" {
+			return openai.New(key, openai.WithBaseURL(route.BaseURL))
+		}
+		return openai.New(key)
 	case Anthropic:
 		if route.BaseURL != "" {
 			return provideranthropic.New(key, provideranthropic.WithBaseURL(route.BaseURL))
@@ -154,10 +158,7 @@ func NewClient(route Route, key string) openai.ChatClient {
 	case Ollama:
 		return ollama.New(route.BaseURL)
 	default:
-		if route.BaseURL != "" {
-			return openai.New(key, openai.WithBaseURL(route.BaseURL))
-		}
-		return openai.New(key)
+		return nil
 	}
 }
 
@@ -205,12 +206,14 @@ func (r *Resolver) ValidateKey(name Name, key string) error {
 		return provideranthropic.ValidateKeyAt(key, route.BaseURL)
 	case Google:
 		return providergoogle.ValidateKeyAt(key, route.BaseURL)
-	default:
+	case OpenAI:
 		// Custom OpenAI-compatible endpoints may not implement /models and
 		// may use non-OpenAI authentication, so store their keys as supplied.
 		if config.CustomEndpoint(route.BaseURL) {
 			return nil
 		}
 		return openai.ValidateKeyAt(key, route.BaseURL)
+	default:
+		return fmt.Errorf("unsupported provider %q", name)
 	}
 }

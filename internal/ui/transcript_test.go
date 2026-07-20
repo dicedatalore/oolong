@@ -10,7 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 func TestSaveTranscript(t *testing.T) {
@@ -21,7 +21,7 @@ func TestSaveTranscript(t *testing.T) {
 	model := enterChat(t, srv)
 	am := model.(Model)
 	am.systemPrompt = "be brief"
-	am.messages = []openai.Message{
+	am.messages = []chat.Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi there"},
 	}
@@ -52,7 +52,7 @@ func TestSaveTranscriptHonorsDirEnv(t *testing.T) {
 
 	model := enterChat(t, srv)
 	am := model.(Model)
-	am.messages = []openai.Message{{Role: "user", Content: "hello"}}
+	am.messages = []chat.Message{{Role: "user", Content: "hello"}}
 	// The env var wins even when the config also names a directory.
 	am.transcriptDir = t.TempDir()
 	model = am
@@ -75,7 +75,7 @@ func TestSaveTranscriptUsesConfigDir(t *testing.T) {
 
 	model := enterChat(t, srv)
 	am := model.(Model)
-	am.messages = []openai.Message{{Role: "user", Content: "hello"}}
+	am.messages = []chat.Message{{Role: "user", Content: "hello"}}
 	am.transcriptDir = dir
 	model = am
 

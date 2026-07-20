@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 const (
@@ -20,9 +20,9 @@ const (
 )
 
 type Transcript struct {
-	Model    string           `json:"model"`
-	System   string           `json:"system,omitempty"`
-	Messages []openai.Message `json:"messages"`
+	Model    string         `json:"model"`
+	System   string         `json:"system,omitempty"`
+	Messages []chat.Message `json:"messages"`
 }
 
 func LoadTranscript(path string) (Transcript, error) {

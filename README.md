@@ -123,6 +123,11 @@ base_url = "http://localhost:11434"
 context_window = 128000
 ```
 
+Every custom model must set `provider`, unless a global `provider` is set for
+models to inherit. For a model outside the configured catalog, use
+`oolong --model MODEL --provider PROVIDER`; Oolong does not infer a provider
+from a model name.
+
 For a single run, `oolong --model <id>` opens a chat directly with a configured model, overriding `default_model`.
 
 `provider` selects the client and may be `openai`, `anthropic`, `google`, or `ollama`. It can be set globally or per model; per-model values let one catalog mix providers. A global `base_url` is inherited by models using the global provider, while a per-model value overrides it. Models selecting another provider use that provider's official endpoint unless they set their own `base_url`.
