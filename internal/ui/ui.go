@@ -139,6 +139,7 @@ type Model struct {
 	keyErr            string
 	keyNotice         string
 	keyValidating     bool
+	spinnerColorStep  int // position in the primary ↔ secondary fade cycle
 
 	mdStyle    string // glamour style name matching the terminal background
 	resolver   *providerroute.Resolver
@@ -243,8 +244,22 @@ func (m *Model) clientFor(id string) openai.ChatClient {
 func newSpinner(theme theme) spinner.Model {
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
-	spin.Style = lipgloss.NewStyle().Foreground(theme.accent)
+	spin.Style = lipgloss.NewStyle().Foreground(logoColor(0, theme))
 	return spin
+}
+
+// spinnerFadePosition moves from primary to secondary and back over a
+// 32-frame cycle, avoiding a hard color jump when the animation loops.
+func spinnerFadePosition(step int) float64 {
+	const halfCycle = 16
+	step %= halfCycle * 2
+	if step < 0 {
+		step += halfCycle * 2
+	}
+	if step > halfCycle {
+		step = halfCycle*2 - step
+	}
+	return float64(step) / halfCycle
 }
 
 // Init is called once by the Bubble Tea runtime and returns the first
@@ -285,6 +300,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
+		m.spinnerColorStep++
+		m.spin.Style = m.spin.Style.Foreground(logoColor(spinnerFadePosition(m.spinnerColorStep), m.theme))
 		return m, cmd
 	}
 

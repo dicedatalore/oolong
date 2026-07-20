@@ -40,3 +40,21 @@ func typeText(model tea.Model, s string) tea.Model {
 	}
 	return model
 }
+
+func TestSpinnerFadeMovesBetweenBothAccents(t *testing.T) {
+	tests := []struct {
+		step int
+		want float64
+	}{
+		{step: 0, want: 0},
+		{step: 8, want: 0.5},
+		{step: 16, want: 1},
+		{step: 24, want: 0.5},
+		{step: 32, want: 0},
+	}
+	for _, tt := range tests {
+		if got := spinnerFadePosition(tt.step); got != tt.want {
+			t.Errorf("spinnerFadePosition(%d) = %v, want %v", tt.step, got, tt.want)
+		}
+	}
+}
