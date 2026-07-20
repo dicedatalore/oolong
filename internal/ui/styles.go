@@ -19,7 +19,7 @@ type theme struct {
 	logoFrom, logoTo                             [3]int
 }
 
-func newTheme(accent string) theme {
+func newTheme(accent, secondaryAccent string) theme {
 	if accent == "" {
 		accent = "#FFAF87"
 	}
@@ -32,7 +32,16 @@ func newTheme(accent string) theme {
 	dim := func(c int) int { return int(float64(c) * 0.79) }
 	primary := lipgloss.Color(accent)
 	primaryDim := lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", dim(r), dim(g), dim(b)))
-	secondary := lipgloss.Color("#7D56F4")
+	if secondaryAccent == "" {
+		secondaryAccent = "#7D56F4"
+	}
+	sv, err := strconv.ParseUint(secondaryAccent[1:], 16, 32)
+	if err != nil {
+		sv = 0x7D56F4
+		secondaryAccent = "#7D56F4"
+	}
+	sr, sg, sb := int(sv>>16&0xFF), int(sv>>8&0xFF), int(sv&0xFF)
+	secondary := lipgloss.Color(secondaryAccent)
 	return theme{
 		accent:    primary,
 		accentDim: primaryDim,
@@ -49,6 +58,6 @@ func newTheme(accent string) theme {
 		notice:    lipgloss.NewStyle().Foreground(primary),
 		err:       lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")),
 		logoFrom:  [3]int{r, g, b},
-		logoTo:    [3]int{0x7D, 0x56, 0xF4},
+		logoTo:    [3]int{sr, sg, sb},
 	}
 }

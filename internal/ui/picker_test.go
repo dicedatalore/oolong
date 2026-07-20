@@ -35,6 +35,14 @@ func TestPickerHelpHasNoFullHelpToggle(t *testing.T) {
 	}
 }
 
+func TestPickerProviderHeadersAreQuietLabels(t *testing.T) {
+	model := newBuiltinPicker(t, config.Config{})
+	view := model.(Model).picker.View()
+	if !strings.Contains(view, "OPENAI") || strings.Contains(view, model.(Model).theme.header.Render("OpenAI")) {
+		t.Errorf("provider heading still uses the high-contrast badge: %q", view)
+	}
+}
+
 func TestPickerHidesReasoningHelpWithoutModels(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")
@@ -200,6 +208,19 @@ func TestSimplePickerConfigStartsSimple(t *testing.T) {
 	}
 	if h := pickerHeaders(am); h != nil {
 		t.Errorf("simple view shows provider headers: %v", h)
+	}
+}
+
+func TestSimplePickerListCentersAsAlignedBlock(t *testing.T) {
+	view := centerPickerBlock("one\nlonger", 12)
+	lines := strings.Split(view, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("centered block has %d lines, want 2", len(lines))
+	}
+	for i, line := range lines {
+		if got := len(line) - len(strings.TrimLeft(line, " ")); got != 3 {
+			t.Errorf("line %d starts at column %d, want 3: %q", i, got, line)
+		}
 	}
 }
 

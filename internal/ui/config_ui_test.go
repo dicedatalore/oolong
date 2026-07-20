@@ -138,6 +138,17 @@ func TestAccentIsOwnedByEachModel(t *testing.T) {
 	}
 }
 
+func TestSecondaryAccentIsOwnedByEachModel(t *testing.T) {
+	custom := New(nil, "dark", config.Config{SecondaryAccent: "#112233"}, "")
+	defaults := New(nil, "dark", config.Config{}, "")
+	if custom.theme.botLabel.Render("Assistant") == defaults.theme.botLabel.Render("Assistant") {
+		t.Fatal("custom secondary accent did not change assistant styling")
+	}
+	if custom.theme.logoTo != [3]int{0x11, 0x22, 0x33} {
+		t.Errorf("logo gradient target = %v, want custom secondary accent", custom.theme.logoTo)
+	}
+}
+
 func TestPickerEffortAdjust(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()

@@ -178,7 +178,7 @@ func NewWithResolver(resolver *providerroute.Resolver, mdStyle string, cfg confi
 }
 
 func newModel(resolver *providerroute.Resolver, mdStyle string, cfg config.Config, cfgErr string) Model {
-	theme := newTheme(cfg.Accent)
+	theme := newTheme(cfg.Accent, cfg.SecondaryAccent)
 	m := Model{
 		theme:             theme,
 		state:             statePicker,

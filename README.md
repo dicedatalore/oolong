@@ -80,6 +80,7 @@ The catalog below demonstrates all four clients in one configuration. Adding any
 default_model = "gpt-5.6-terra"   # skip the picker on launch
 transcript_dir = "~/notes/chats"  # OOLONG_TRANSCRIPT_DIR still wins
 accent = "#FFAF87"                # primary accent color
+secondary_accent = "#7D56F4"      # assistant messages and logo gradient
 simple_picker = true              # start the picker in its simple view (tab toggles)
 
 # OpenAI client — uses the official Responses API when base_url is omitted.

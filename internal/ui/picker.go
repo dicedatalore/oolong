@@ -208,13 +208,11 @@ func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		d.DefaultDelegate.Render(w, m, index, item)
 		return
 	}
-	// A blank line separates the header from the group above; the top of the
-	// list needs no separator. The two-space indent lines the header up with
-	// the model titles beneath it.
-	if index > 0 {
-		io.WriteString(w, "\n")
-	}
-	io.WriteString(w, "  "+d.theme.header.Render(h.name))
+	label := lipgloss.NewStyle().
+		Foreground(d.theme.accentDim).
+		Bold(true).
+		Render(strings.ToUpper(h.name))
+	io.WriteString(w, "  "+label)
 }
 
 // newPickerDelegate builds the row renderer for the requested view: the full
@@ -222,14 +220,14 @@ func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 // the simple view packs bare one-line rows.
 func newPickerDelegate(simple bool, theme theme) pickerDelegate {
 	delegate := list.NewDefaultDelegate()
+	delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(lipgloss.Color("252"))
+	delegate.Styles.NormalDesc = delegate.Styles.NormalDesc.Foreground(lipgloss.Color("241"))
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
-		Foreground(theme.accent).BorderForeground(theme.accent)
+		Foreground(theme.accent).BorderForeground(theme.accent).Bold(true)
 	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
-		Foreground(theme.accentDim).BorderForeground(theme.accent)
+		Foreground(lipgloss.Color("245")).BorderForeground(theme.accent)
 	delegate.ShowDescription = !simple
-	if simple {
-		delegate.SetSpacing(0)
-	}
+	delegate.SetSpacing(0)
 	return pickerDelegate{DefaultDelegate: delegate, theme: theme}
 }
 
@@ -239,6 +237,10 @@ func newPicker(simple bool, theme theme) list.Model {
 	// Provider headers between the rows serve as the picker's titles; the
 	// title bar area stays reserved for the filter input.
 	picker.SetShowTitle(false)
+	picker.FilterInput.Prompt = "Search  "
+	picker.Styles.TitleBar = picker.Styles.TitleBar.PaddingLeft(2).PaddingBottom(1)
+	picker.Styles.Filter.Focused.Prompt = picker.Styles.Filter.Focused.Prompt.Foreground(theme.accent)
+	picker.Styles.Filter.Focused.Text = picker.Styles.Filter.Focused.Text.Foreground(lipgloss.Color("252"))
 	picker.Styles.ActivePaginationDot = picker.Styles.ActivePaginationDot.Foreground(theme.accent)
 	picker.SetShowStatusBar(false)
 	// Help renders separately in viewPicker so the list block can be centered
@@ -428,6 +430,9 @@ func (m Model) viewPicker() string {
 	// centers on its actual content.
 	view := strings.TrimRight(m.picker.View(), " \n")
 	if logo := m.pickerLogo(); logo != "" {
+		if m.simplePicker {
+			view = centerPickerBlock(view, lipgloss.Width(logo))
+		}
 		// The logo is narrower than the list rows; center it over the
 		// block so it lands centered in the window, rather than hugging
 		// the list's left edge.
@@ -451,4 +456,18 @@ func (m Model) viewPicker() string {
 		lipgloss.Center, lipgloss.Center, view)
 	return m.theme.page.Render(centered + "\n" +
 		lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, bottomBar))
+}
+
+// centerPickerBlock centers a multiline list as one aligned block. Using
+// PlaceHorizontal directly would center each model name independently and
+// leave their starting columns ragged.
+func centerPickerBlock(view string, width int) string {
+	viewWidth := lipgloss.Width(view)
+	if viewWidth >= width {
+		return view
+	}
+	return lipgloss.NewStyle().
+		Width(viewWidth).
+		MarginLeft((width - viewWidth) / 2).
+		Render(view)
 }

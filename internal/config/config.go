@@ -34,13 +34,14 @@ type Model struct {
 }
 
 type Config struct {
-	DefaultModel  string  `toml:"default_model"`  // skip the picker on launch when set
-	TranscriptDir string  `toml:"transcript_dir"` // OOLONG_TRANSCRIPT_DIR env var still wins
-	Accent        string  `toml:"accent"`         // primary accent color, "#RRGGBB"
-	SimplePicker  bool    `toml:"simple_picker"`  // start the model picker in its simple view
-	BaseURL       string  `toml:"base_url"`       // optional provider endpoint for every model
-	Provider      string  `toml:"provider"`       // blank preserves the OpenAI default
-	Models        []Model `toml:"models"`         // replaces the built-in catalog when present
+	DefaultModel    string  `toml:"default_model"`    // skip the picker on launch when set
+	TranscriptDir   string  `toml:"transcript_dir"`   // OOLONG_TRANSCRIPT_DIR env var still wins
+	Accent          string  `toml:"accent"`           // primary accent color, "#RRGGBB"
+	SecondaryAccent string  `toml:"secondary_accent"` // secondary accent color, "#RRGGBB"
+	SimplePicker    bool    `toml:"simple_picker"`    // start the model picker in its simple view
+	BaseURL         string  `toml:"base_url"`         // optional provider endpoint for every model
+	Provider        string  `toml:"provider"`         // blank preserves the OpenAI default
+	Models          []Model `toml:"models"`           // replaces the built-in catalog when present
 }
 
 // OfficialBaseURL is the endpoint the OpenAI SDK talks to by default.
@@ -112,6 +113,9 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 
 # Primary accent color.
 # accent = "#FFAF87"
+
+# Secondary accent color, used for assistant messages and the logo gradient.
+# secondary_accent = "#7D56F4"
 
 # Start the model picker in its simple view: one line per model, no
 # descriptions or rates. Tab toggles the views either way.
@@ -202,6 +206,10 @@ func parse(data string) (Config, error) {
 	if c.Accent != "" && !hexColor.MatchString(c.Accent) {
 		drop("accent %q is not a #RRGGBB color", c.Accent)
 		c.Accent = ""
+	}
+	if c.SecondaryAccent != "" && !hexColor.MatchString(c.SecondaryAccent) {
+		drop("secondary_accent %q is not a #RRGGBB color", c.SecondaryAccent)
+		c.SecondaryAccent = ""
 	}
 	if c.BaseURL != "" && !validEndpoint(c.BaseURL) {
 		drop("base_url %q is not an http(s) URL", c.BaseURL)

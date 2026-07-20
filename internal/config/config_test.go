@@ -36,6 +36,7 @@ func TestParse(t *testing.T) {
 default_model = "gpt-5.4"
 transcript_dir = "~/notes/chats"
 accent = "#FFAF87"
+secondary_accent = "#445566"
 simple_picker = true
 
 [[models]]
@@ -47,7 +48,7 @@ reasoning_effort = "medium"
 verbosity = "low"
 `,
 			check: func(c Config) string {
-				if c.DefaultModel != "gpt-5.4" || c.TranscriptDir != "~/notes/chats" || c.Accent != "#FFAF87" {
+				if c.DefaultModel != "gpt-5.4" || c.TranscriptDir != "~/notes/chats" || c.Accent != "#FFAF87" || c.SecondaryAccent != "#445566" {
 					return "scalar fields not parsed"
 				}
 				if !c.SimplePicker {
@@ -89,6 +90,17 @@ verbosity = "low"
 			check: func(c Config) string {
 				if c.Accent != "" {
 					return "bad accent kept"
+				}
+				return ""
+			},
+		},
+		{
+			name:    "bad secondary accent dropped",
+			data:    `secondary_accent = "purple"`,
+			wantErr: `secondary_accent "purple"`,
+			check: func(c Config) string {
+				if c.SecondaryAccent != "" {
+					return "bad secondary accent kept"
 				}
 				return ""
 			},
