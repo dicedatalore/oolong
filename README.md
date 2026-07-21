@@ -214,7 +214,7 @@ The mouse wheel scrolls the conversation too; hold `shift` while dragging to sel
 go test ./...
 ```
 
-The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live in `internal/openai`, `internal/anthropic`, `internal/google`, and `internal/ollama`; `internal/provider` is the shared route resolver and client factory used by both TUI and one-shot modes. Supporting packages handle configuration, keychain access, math formatting, and clipboard image integration.
+The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live under `internal/provider/<name>` alongside the shared route resolver and client factory used by both TUI and one-shot modes. Supporting packages handle configuration, keychain access, math formatting, and clipboard image integration.
 
 Releases are cut automatically on push to `main`: the version bump is derived from [conventional commit](https://www.conventionalcommits.org) messages — `feat:` → minor, `fix:` → patch, a breaking change → major — and commits of other types (`chore:`, `docs:`, `test:`, …) don't trigger a release.
 

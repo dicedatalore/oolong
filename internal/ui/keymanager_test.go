@@ -9,10 +9,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/zalando/go-keyring"
 
-	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/config"
-	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
+	"github.com/dicedatalore/oolong/internal/provider/anthropic"
+	"github.com/dicedatalore/oolong/internal/provider/google"
 )
 
 func newKeyManagerModel(t *testing.T) tea.Model {
@@ -90,7 +90,7 @@ func TestAnthropicModelUsesAnthropicClient(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	cfg := config.Config{Models: []config.Model{{ID: "claude-test", Provider: "anthropic"}}}
 	model := New(nil, "dark", cfg, "")
-	if _, ok := model.clientFor("claude-test").(*provideranthropic.Client); !ok {
+	if _, ok := model.clientFor("claude-test").(*anthropic.Client); !ok {
 		t.Error("Anthropic model was not routed to the Anthropic client")
 	}
 }
@@ -101,7 +101,7 @@ func TestGoogleModelUsesGoogleClient(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "AIza-test")
 	cfg := config.Config{Models: []config.Model{{ID: "gemini-test", Provider: "google"}}}
 	model := New(nil, "dark", cfg, "")
-	if _, ok := model.clientFor("gemini-test").(*providergoogle.Client); !ok {
+	if _, ok := model.clientFor("gemini-test").(*google.Client); !ok {
 		t.Error("Google model was not routed to the Google client")
 	}
 }

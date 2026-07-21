@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"os"
 
-	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/config"
-	providergoogle "github.com/dicedatalore/oolong/internal/google"
 	"github.com/dicedatalore/oolong/internal/keystore"
-	"github.com/dicedatalore/oolong/internal/ollama"
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/provider/anthropic"
+	"github.com/dicedatalore/oolong/internal/provider/google"
+	"github.com/dicedatalore/oolong/internal/provider/ollama"
+	"github.com/dicedatalore/oolong/internal/provider/openai"
 )
 
 type Name string
@@ -147,14 +147,14 @@ func NewClient(route Route, key string) chat.Client {
 		return openai.New(key)
 	case Anthropic:
 		if route.BaseURL != "" {
-			return provideranthropic.New(key, provideranthropic.WithBaseURL(route.BaseURL))
+			return anthropic.New(key, anthropic.WithBaseURL(route.BaseURL))
 		}
-		return provideranthropic.New(key)
+		return anthropic.New(key)
 	case Google:
 		if route.BaseURL != "" {
-			return providergoogle.New(key, providergoogle.WithBaseURL(route.BaseURL))
+			return google.New(key, google.WithBaseURL(route.BaseURL))
 		}
-		return providergoogle.New(key)
+		return google.New(key)
 	case Ollama:
 		return ollama.New(route.BaseURL)
 	default:
@@ -203,9 +203,9 @@ func (r *Resolver) ValidateKey(name Name, key string) error {
 	route := r.RouteForProvider(name)
 	switch name {
 	case Anthropic:
-		return provideranthropic.ValidateKeyAt(key, route.BaseURL)
+		return anthropic.ValidateKeyAt(key, route.BaseURL)
 	case Google:
-		return providergoogle.ValidateKeyAt(key, route.BaseURL)
+		return google.ValidateKeyAt(key, route.BaseURL)
 	case OpenAI:
 		// Custom OpenAI-compatible endpoints may not implement /models and
 		// may use non-OpenAI authentication, so store their keys as supplied.

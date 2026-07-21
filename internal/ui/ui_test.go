@@ -12,7 +12,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/dicedatalore/oolong/internal/config"
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/provider/openai"
 )
 
 // clientFor returns a client that talks to the fake server instead of the

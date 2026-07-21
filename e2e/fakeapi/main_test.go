@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	provideranthropic "github.com/dicedatalore/oolong/internal/anthropic"
 	"github.com/dicedatalore/oolong/internal/chat"
-	providergoogle "github.com/dicedatalore/oolong/internal/google"
+	"github.com/dicedatalore/oolong/internal/provider/anthropic"
+	"github.com/dicedatalore/oolong/internal/provider/google"
 )
 
 func TestGeminiFakeMatchesSDK(t *testing.T) {
@@ -25,7 +25,7 @@ func TestGeminiFakeMatchesSDK(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	client := providergoogle.New("AIza-test", providergoogle.WithBaseURL(server.URL))
+	client := google.New("AIza-test", google.WithBaseURL(server.URL))
 	stream := make(chan chat.StreamEvent)
 	go client.StreamChat(context.Background(), "gemini-3.5-flash",
 		[]chat.Message{{Role: "user", Content: "hello fake"}}, chat.Options{}, stream)
@@ -67,7 +67,7 @@ func TestAnthropicFakeMatchesSDK(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	client := provideranthropic.New("sk-ant-test", provideranthropic.WithBaseURL(server.URL))
+	client := anthropic.New("sk-ant-test", anthropic.WithBaseURL(server.URL))
 	stream := make(chan chat.StreamEvent)
 	go client.StreamChat(context.Background(), "claude-sonnet-5",
 		[]chat.Message{{Role: "user", Content: "hello fake"}}, chat.Options{}, stream)
