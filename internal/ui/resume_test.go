@@ -9,8 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/config"
-	"github.com/dicedatalore/oolong/internal/openai"
 )
 
 func TestTranscriptRoundTrip(t *testing.T) {
@@ -20,10 +20,10 @@ func TestTranscriptRoundTrip(t *testing.T) {
 	model := enterChat(t, srv)
 	am := model.(Model)
 	am.systemPrompt = "be brief\nand kind"
-	am.messages = []openai.Message{
+	am.messages = []chat.Message{
 		{Role: "user", Content: "show me a heading"},
 		{Role: "assistant", Model: "model --> arbitrary", Content: "## Sure\n\n```md\n## fenced heading\n```\n\n<!--oolong: exact -->"},
-		{Role: "user", Content: "thanks", Images: [][]byte{{1, 2, 3}}, Files: []openai.File{{Name: "a.txt", Text: "contents"}}},
+		{Role: "user", Content: "thanks", Images: [][]byte{{1, 2, 3}}, Files: []chat.File{{Name: "a.txt", Text: "contents"}}},
 	}
 
 	got, err := parseTranscript(am.transcriptMarkdown())
@@ -39,8 +39,16 @@ func TestTranscriptRoundTrip(t *testing.T) {
 	if len(got.Messages) != 3 {
 		t.Fatalf("len(Messages) = %d, want 3", len(got.Messages))
 	}
-	if !reflect.DeepEqual(got.Messages, am.messages) {
-		t.Errorf("messages did not round trip:\n got: %#v\nwant: %#v", got.Messages, am.messages)
+	if !reflect.DeepEqual(got.Messages[:2], am.messages[:2]) {
+		t.Errorf("text messages did not round trip:\n got: %#v\nwant: %#v", got.Messages[:2], am.messages[:2])
+	}
+	if got.Messages[2].Role != "user" || got.Messages[2].Images != nil || got.Messages[2].Files != nil {
+		t.Errorf("attachments were restored instead of visible text: %#v", got.Messages[2])
+	}
+	for _, want := range []string{"📎 1 image", "📄 a.txt", "thanks"} {
+		if !strings.Contains(got.Messages[2].Content, want) {
+			t.Errorf("resumed attachment text missing %q: %q", want, got.Messages[2].Content)
+		}
 	}
 }
 
@@ -57,7 +65,7 @@ func TestResumeOpensChatWithConversation(t *testing.T) {
 	tr := Transcript{
 		Model:  "gpt-5.6-terra",
 		System: "be brief",
-		Messages: []openai.Message{
+		Messages: []chat.Message{
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi", Model: "gpt-5.6-terra"},
 		},

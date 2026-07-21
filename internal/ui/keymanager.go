@@ -10,6 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/dicedatalore/oolong/internal/keystore"
 	providerroute "github.com/dicedatalore/oolong/internal/provider"
@@ -46,6 +47,7 @@ func (m *Model) keyInput(provider keystore.Provider) *textinput.Model {
 
 func (m *Model) openKeyManager() tea.Cmd {
 	m.state = stateKeyManager
+	m.help.ShowAll = false
 	m.keyProvider = keystore.OpenAI
 	m.keyErr = ""
 	for _, provider := range keyProviders {
@@ -93,7 +95,7 @@ func (m Model) closeKeyManager() (tea.Model, tea.Cmd) {
 	// The previous picker visit's tick stopped scheduling in this screen. Use
 	// a new tag so a delayed tick cannot revive that old animation loop.
 	m.sparkleTag++
-	return m, sparkleTick(m.sparkleTag)
+	return m, m.sparkleCmd()
 }
 
 func (m Model) activeKeyInput() textinput.Model {
@@ -111,13 +113,13 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "esc":
 			return m.closeKeyManager()
-		case "tab", "down":
+		case "tab", "down", "right":
 			return m, m.selectKeyProvider(m.stepKeyProvider(+1))
-		case "up":
+		case "shift+tab", "up", "left":
 			return m, m.selectKeyProvider(m.stepKeyProvider(-1))
 		case "ctrl+d":
 			if err := keystore.Delete(m.keyProvider); err != nil {
-				m.keyErr = "couldn't delete key from OS keychain"
+				m.keyErr = "couldn't delete key — check that the OS keychain is available and unlocked"
 			} else if keystore.Status(m.keyProvider) == "environment" {
 				m.keyNotice = fmt.Sprintf("%s key still supplied by environment", providerName(m.keyProvider))
 			} else {
@@ -136,7 +138,7 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.keyErr = ""
 			m.keyValidating = true
 			provider := m.keyProvider
-			return m, tea.Batch(m.spin.Tick, func() tea.Msg {
+			return m, m.activityCmd(func() tea.Msg {
 				return keyCheckMsg{provider: provider, key: keyValue,
 					err: m.resolver.ValidateKey(providerroute.Name(provider), keyValue)}
 			})
@@ -155,21 +157,22 @@ func (m Model) handleKeyCheck(msg keyCheckMsg) (tea.Model, tea.Cmd) {
 	}
 	m.keyValidating = false
 	if msg.err != nil {
-		m.keyErr = msg.err.Error()
+		m.keyErr = fmt.Sprintf("%s key wasn't accepted — check it and try again: %v",
+			providerName(msg.provider), msg.err)
 		return m, nil
 	}
 	if err := keystore.Set(msg.provider, msg.key); err != nil {
-		m.keyErr = "couldn't save key to OS keychain"
+		m.keyErr = "couldn't save key — check that the OS keychain is available and unlocked"
 		return m, nil
 	}
 	m.keyInput(msg.provider).SetValue("")
 	m.clients = nil
 	m.refreshKeyStatuses()
 	m.refreshBuiltinCatalog()
-	m.keyNotice = fmt.Sprintf("%s key saved to OS keychain", providerName(msg.provider))
+	m.keyNotice = fmt.Sprintf("%s connected — choose a model to start chatting", providerName(msg.provider))
 	m.keyErr = ""
 
-	return m, nil
+	return m.closeKeyManager()
 }
 
 func providerName(provider keystore.Provider) string {
@@ -182,32 +185,104 @@ func providerName(provider keystore.Provider) string {
 	return "OpenAI"
 }
 
-func (m Model) keyRow(provider keystore.Provider, input textinput.Model) string {
-	marker := "  "
-	if m.keyProvider == provider {
-		marker = "› "
+func (m Model) keyProviderTabs() string {
+	tabs := make([]string, 0, len(keyProviders))
+	for _, provider := range keyProviders {
+		label := providerName(provider)
+		if m.width < 34 {
+			switch provider {
+			case keystore.OpenAI:
+				label = "OA"
+			case keystore.Anthropic:
+				label = "A"
+			case keystore.Google:
+				label = "G"
+			}
+		}
+		style := lipgloss.NewStyle().Padding(0, 1).Foreground(m.theme.accentDim)
+		if provider == m.keyProvider {
+			if m.theme.noColor {
+				style = lipgloss.NewStyle().Padding(0, 1).Reverse(true).Bold(true)
+			} else {
+				style = style.Foreground(lipgloss.Color("235")).Background(m.theme.accent).Bold(true)
+			}
+		}
+		tabs = append(tabs, style.Render(label))
 	}
-	label := m.theme.header.Render(providerName(provider))
-	status := m.keyStatuses[provider]
-	if status == "" {
-		status = "not set"
+	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+}
+
+func (m Model) keyStatus(provider keystore.Provider) string {
+	switch m.keyStatuses[provider] {
+	case "environment":
+		return m.theme.notice.Render("● Provided by " + keystore.EnvName(provider))
+	case "keychain":
+		return m.theme.notice.Render("● Saved on this device")
+	default:
+		return m.theme.help.Render("○ No key configured")
 	}
-	statusText := m.theme.help.Render(" (" + status + ")")
-	return marker + label + statusText + "\n" + m.theme.inputRow.Render(input.View())
+}
+
+func (m Model) keyCard() string {
+	provider := m.keyProvider
+	input := *m.keyInput(provider)
+	// Width applies to the card's content; leave room for its padding, border,
+	// and the surrounding page frame.
+	available := max(1, m.width-m.pageStyle().GetHorizontalFrameSize())
+	width := max(1, min(56, available-6))
+	input.SetWidth(max(1, width-4))
+
+	description := "Paste a new key below. It will be validated before it is saved."
+	if available < 42 || m.height < 14 {
+		description = "Enter a key to verify and save."
+	}
+	if m.keyStatuses[provider] == "environment" {
+		description = "The environment value takes priority. Saving a key here will keep it as a fallback."
+	} else if m.keyStatuses[provider] == "keychain" {
+		description = "Enter a new key to replace the one saved on this device."
+	}
+	body := m.keyStatus(provider) + "\n\n" + m.theme.help.Render(description) + "\n\n" + input.View()
+	if m.height < 12 {
+		body = m.keyStatus(provider) + "\n" + input.View()
+	}
+	card := lipgloss.NewStyle().
+		Width(width).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.accentDim)
+	if available >= 30 && m.height >= 12 {
+		card = card.Padding(1, 2)
+	} else {
+		card = card.Padding(0, 1)
+	}
+	return card.Render(body)
 }
 
 func (m Model) viewKeyManager() string {
-	header := m.theme.headerBar.Render(m.theme.header.Render("API key manager"))
-	rows := make([]string, 0, len(keyProviders))
-	for _, provider := range keyProviders {
-		rows = append(rows, m.keyRow(provider, *m.keyInput(provider)))
+	page := m.pageStyle()
+	contentWidth := max(1, m.width-page.GetHorizontalFrameSize())
+	contentHeight := max(1, m.height-page.GetVerticalFrameSize())
+
+	header := m.theme.headerBar.Render(m.theme.header.Render("API keys"))
+	content := header + "\n" + m.keyProviderTabs() + "\n\n" + m.keyCard()
+	if m.height < 12 {
+		content = m.keyProviderTabs() + "\n" + m.keyCard()
 	}
-	body := strings.Join(rows, "\n\n")
-	bottom := m.theme.help.Render("tab/↑/↓: select • enter: validate/save • ctrl+d: delete • esc: back")
+	// Keep every line aligned to the widest part of the manager when the
+	// whole block is centered; otherwise Place centers each line separately.
+	content = lipgloss.NewStyle().Width(lipgloss.Width(content)).Render(content)
+
+	bottom := m.theme.help.Render("←/→ or tab: provider • enter: verify & save • ctrl+d: remove saved key • esc: back")
+	if m.width < 50 || m.height < 12 {
+		bottom = m.theme.help.Render("tab provider • enter save • esc back")
+	}
 	if m.keyValidating {
-		bottom = m.spin.View() + m.theme.help.Render("validating "+providerName(m.keyProvider)+" key…")
+		bottom = m.activityIndicator() + m.theme.help.Render("validating "+providerName(m.keyProvider)+" key…")
 	} else if m.keyErr != "" {
 		bottom = m.theme.err.Render(m.keyErr)
 	}
-	return m.theme.page.Render(header + "\n" + body + "\n" + m.theme.bottomBar.Render(bottom))
+	bottom = centeredBar(contentWidth, bottom)
+
+	centered := lipgloss.Place(contentWidth, max(1, contentHeight-lipgloss.Height(bottom)),
+		lipgloss.Center, lipgloss.Center, content)
+	return page.Render(centered + "\n" + bottom)
 }

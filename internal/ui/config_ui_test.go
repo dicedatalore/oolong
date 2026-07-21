@@ -19,8 +19,8 @@ import (
 
 func customCatalog() []config.Model {
 	return []config.Model{
-		{ID: "gpt-5.4", Description: "Previous generation", InputRate: 1.25, OutputRate: 10},
-		{ID: "gpt-5.6-terra", Description: "Balances intelligence and cost", InputRate: 2.50, OutputRate: 15},
+		{ID: "gpt-5.4", Provider: "openai", Description: "Previous generation", InputRate: 1.25, OutputRate: 10},
+		{ID: "gpt-5.6-terra", Provider: "openai", Description: "Balances intelligence and cost", InputRate: 2.50, OutputRate: 15},
 	}
 }
 
@@ -76,7 +76,7 @@ func TestStreamUsesPerModelEndpoint(t *testing.T) {
 
 	cfg := config.Config{
 		DefaultModel: "local-llama",
-		Models:       []config.Model{{ID: "local-llama", BaseURL: local.URL}},
+		Models:       []config.Model{{ID: "local-llama", Provider: "openai", BaseURL: local.URL}},
 	}
 	model := newCustomModel(t, global, cfg)
 	if model.(Model).state != stateChat {
@@ -135,6 +135,17 @@ func TestAccentIsOwnedByEachModel(t *testing.T) {
 	}
 	if got := New(nil, "dark", config.Config{}, "").theme.notice.Render("notice"); got != defaultView {
 		t.Fatal("constructing a custom theme mutated later default models")
+	}
+}
+
+func TestSecondaryAccentIsOwnedByEachModel(t *testing.T) {
+	custom := New(nil, "dark", config.Config{SecondaryAccent: "#112233"}, "")
+	defaults := New(nil, "dark", config.Config{}, "")
+	if custom.theme.botLabel.Render("Assistant") == defaults.theme.botLabel.Render("Assistant") {
+		t.Fatal("custom secondary accent did not change assistant styling")
+	}
+	if custom.theme.logoTo != [3]int{0x11, 0x22, 0x33} {
+		t.Errorf("logo gradient target = %v, want custom secondary accent", custom.theme.logoTo)
 	}
 }
 
@@ -203,7 +214,7 @@ func TestStreamCarriesEffortFromConfigAndPicker(t *testing.T) {
 	cfg := config.Config{
 		DefaultModel: "gpt-5.4",
 		Models: []config.Model{
-			{ID: "gpt-5.4", ReasoningEffort: "medium", Verbosity: "low"},
+			{ID: "gpt-5.4", Provider: "openai", ReasoningEffort: "medium", Verbosity: "low"},
 		},
 	}
 	model := newCustomModel(t, srv, cfg)

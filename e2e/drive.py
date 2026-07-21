@@ -4,7 +4,8 @@
 Usage: drive.py <capture-file> <cwd> <script...>
 
 Script items are "delay:keys" pairs (keys may use python escapes like \\r,
-\\x1b), sent in order once the app is up. The binary comes from $OOLONG_BIN,
+\\x1b), sent in order once the app is up. Use @resize=ROWSxCOLS as the keys
+to resize the PTY and deliver SIGWINCH. The binary comes from $OOLONG_BIN,
 extra arguments from $OOLONG_ARGS; raw terminal output lands in the capture
 file for the caller to assert on.
 
@@ -28,8 +29,12 @@ if pid == 0:
     argv = [os.environ["OOLONG_BIN"]] + os.environ.get("OOLONG_ARGS", "").split()
     os.execv(argv[0], [a for a in argv if a])
 
+def resize(rows, cols):
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    os.kill(pid, signal.SIGWINCH)
+
 # 100x30 window, or Bubble Tea sees 0x0.
-fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+resize(30, 100)
 
 captured = b""
 deadline = time.time() + 25
@@ -73,7 +78,11 @@ while time.time() < deadline:
             os.write(fd, reply)
     if idx < len(script) and time.time() >= next_key_at:
         delay, keys = script[idx]
-        os.write(fd, keys)
+        if keys.startswith(b"@resize="):
+            rows, cols = keys.removeprefix(b"@resize=").decode().split("x", 1)
+            resize(int(rows), int(cols))
+        else:
+            os.write(fd, keys)
         idx += 1
         next_key_at = time.time() + delay
     if idx >= len(script) and time.time() >= next_key_at + 1.0:

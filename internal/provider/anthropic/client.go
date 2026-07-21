@@ -14,7 +14,7 @@ import (
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 const defaultMaxTokens = 8192
@@ -30,9 +30,9 @@ func New(apiKey string, opts ...option.RequestOption) *Client {
 
 func WithBaseURL(url string) option.RequestOption { return option.WithBaseURL(url) }
 
-func (c *Client) StreamChat(ctx context.Context, model string, messages []openai.Message, opts openai.Options, ch chan<- openai.StreamEvent) {
+func (c *Client) StreamChat(ctx context.Context, model string, messages []chat.Message, opts chat.Options, ch chan<- chat.StreamEvent) {
 	defer close(ch)
-	emit := func(event openai.StreamEvent) bool {
+	emit := func(event chat.StreamEvent) bool {
 		select {
 		case ch <- event:
 			return true
@@ -73,7 +73,7 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []openai
 
 	stream := c.api.Messages.NewStreaming(ctx, params)
 	defer stream.Close()
-	var usage openai.Usage
+	var usage chat.Usage
 	for stream.Next() {
 		event := stream.Current()
 		switch event.Type {
@@ -82,7 +82,7 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []openai
 			usage.InputTokens = int(u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens)
 		case "content_block_delta":
 			if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
-				if !emit(openai.StreamEvent{Delta: event.Delta.Text}) {
+				if !emit(chat.StreamEvent{Delta: event.Delta.Text}) {
 					return
 				}
 			}
@@ -96,14 +96,14 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []openai
 	}
 	if err := stream.Err(); err != nil {
 		if ctx.Err() == nil {
-			emit(openai.StreamEvent{Err: apiError(err)})
+			emit(chat.StreamEvent{Err: apiError(err)})
 		}
 		return
 	}
-	emit(openai.StreamEvent{Done: true, Usage: usage})
+	emit(chat.StreamEvent{Done: true, Usage: usage})
 }
 
-func fileBlock(file openai.File) string {
+func fileBlock(file chat.File) string {
 	fence := "```"
 	for strings.Contains(file.Text, fence) {
 		fence += "`"

@@ -46,7 +46,7 @@ func TestOneShotStreamsToWriter(t *testing.T) {
 
 	cfg := config.Config{
 		DefaultModel: "local-llama",
-		Models:       []config.Model{{ID: "local-llama", BaseURL: srv.URL, ReasoningEffort: "low"}},
+		Models:       []config.Model{{ID: "local-llama", Provider: "openai", BaseURL: srv.URL, ReasoningEffort: "low"}},
 	}
 	var out strings.Builder
 	if code := Run(context.Background(), provider.NewResolver(cfg), "explain", "package main\n", &out, &out); code != 0 {

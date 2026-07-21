@@ -1,4 +1,4 @@
-// Command fakeapi is a fake OpenAI, Anthropic, and Google Gemini API for
+// Command fakeapi is a fake OpenAI, Anthropic, Google Gemini, and Ollama API for
 // driving Oolong end-to-end. It serves the providers' model and streaming
 // chat shapes.
 //
@@ -7,6 +7,7 @@
 //	REQLOG             append each /v1/responses request body to this file
 //	ANTHROPIC_REQLOG   append each /v1/messages request body to this file
 //	GEMINI_REQLOG      append each streamGenerateContent request body to this file
+//	OLLAMA_REQLOG      append each /api/chat request body to this file
 //	REPLY_FILE     stream this file's text instead of the built-in chunks
 //	REPLY_DELAY_MS delay between streamed words (default 0; the demo uses
 //	               ~40 to look like a real model thinking)
@@ -37,6 +38,7 @@ func main() {
 	http.HandleFunc("/v1/responses", responses)
 	http.HandleFunc("/v1/messages", messages)
 	http.HandleFunc("/v1beta/models/", generateContent)
+	http.HandleFunc("/api/chat", ollamaChat)
 
 	ln, err := net.Listen("tcp", os.Args[1])
 	if err != nil {
@@ -49,6 +51,11 @@ func main() {
 
 func models(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if strings.Contains(r.Header.Get("Authorization"), "bad-key") || r.Header.Get("x-api-key") == "bad-key" {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":{"message":"invalid API key"}}`)
+		return
+	}
 	if r.Header.Get("x-api-key") != "" {
 		fmt.Fprint(w, `{"data":[`+
 			`{"id":"claude-haiku-4-5","created_at":"2026-01-01T00:00:00Z","display_name":"Claude Haiku 4.5","type":"model"},`+
@@ -60,6 +67,21 @@ func models(w http.ResponseWriter, r *http.Request) {
 		`{"id":"gpt-5.6-luna","object":"model","created":1,"owned_by":"openai"},`+
 		`{"id":"gpt-5.6-terra","object":"model","created":1,"owned_by":"openai"},`+
 		`{"id":"gpt-5.6-sol","object":"model","created":1,"owned_by":"openai"}]}`)
+}
+
+// ollamaChat fakes Ollama's newline-delimited native streaming response.
+func ollamaChat(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	logRequest("OLLAMA_REQLOG", body)
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	fl := w.(http.Flusher)
+	for _, part := range replyChunks() {
+		fmt.Fprintf(w, "{\"message\":{\"role\":\"assistant\",\"content\":%s},\"done\":false}\n", strconv.Quote(part))
+		fl.Flush()
+		time.Sleep(replyDelay())
+	}
+	fmt.Fprintln(w, `{"message":{"role":"assistant","content":""},"done":true,"prompt_eval_count":10,"eval_count":30}`)
+	fl.Flush()
 }
 
 func responses(w http.ResponseWriter, r *http.Request) {

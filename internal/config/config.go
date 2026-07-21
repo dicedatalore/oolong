@@ -34,13 +34,15 @@ type Model struct {
 }
 
 type Config struct {
-	DefaultModel  string  `toml:"default_model"`  // skip the picker on launch when set
-	TranscriptDir string  `toml:"transcript_dir"` // OOLONG_TRANSCRIPT_DIR env var still wins
-	Accent        string  `toml:"accent"`         // primary accent color, "#RRGGBB"
-	SimplePicker  bool    `toml:"simple_picker"`  // start the model picker in its simple view
-	BaseURL       string  `toml:"base_url"`       // optional provider endpoint for every model
-	Provider      string  `toml:"provider"`       // blank preserves the OpenAI default
-	Models        []Model `toml:"models"`         // replaces the built-in catalog when present
+	DefaultModel    string  `toml:"default_model"`    // skip the picker on launch when set
+	TranscriptDir   string  `toml:"transcript_dir"`   // OOLONG_TRANSCRIPT_DIR env var still wins
+	Accent          string  `toml:"accent"`           // primary accent color, "#RRGGBB"
+	SecondaryAccent string  `toml:"secondary_accent"` // secondary accent color, "#RRGGBB"
+	SimplePicker    bool    `toml:"simple_picker"`    // start the model picker in its simple view
+	ReducedMotion   bool    `toml:"reduced_motion"`   // disable decorative animation
+	BaseURL         string  `toml:"base_url"`         // optional provider endpoint for every model
+	Provider        string  `toml:"provider"`         // optional default inherited by models without one
+	Models          []Model `toml:"models"`           // replaces the built-in catalog when present
 }
 
 // OfficialBaseURL is the endpoint the OpenAI SDK talks to by default.
@@ -113,9 +115,15 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 # Primary accent color.
 # accent = "#FFAF87"
 
+# Secondary accent color, used for assistant messages and the logo gradient.
+# secondary_accent = "#7D56F4"
+
 # Start the model picker in its simple view: one line per model, no
 # descriptions or rates. Tab toggles the views either way.
 # simple_picker = true
+
+# Disable the animated picker logo and spinner color cycling.
+# reduced_motion = true
 
 # Any OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter, …). Applies
 # to every model unless one sets its own base_url below. The OPENAI_BASE_URL
@@ -203,6 +211,10 @@ func parse(data string) (Config, error) {
 		drop("accent %q is not a #RRGGBB color", c.Accent)
 		c.Accent = ""
 	}
+	if c.SecondaryAccent != "" && !hexColor.MatchString(c.SecondaryAccent) {
+		drop("secondary_accent %q is not a #RRGGBB color", c.SecondaryAccent)
+		c.SecondaryAccent = ""
+	}
 	if c.BaseURL != "" && !validEndpoint(c.BaseURL) {
 		drop("base_url %q is not an http(s) URL", c.BaseURL)
 		c.BaseURL = ""
@@ -210,6 +222,10 @@ func parse(data string) (Config, error) {
 	if c.Provider != "" && !validProvider(c.Provider) {
 		drop("provider %q is not supported", c.Provider)
 		c.Provider = ""
+	}
+	if c.BaseURL != "" && c.Provider == "" {
+		drop("base_url requires an explicit provider")
+		c.BaseURL = ""
 	}
 	models := c.Models[:0]
 	for _, m := range c.Models {
@@ -231,6 +247,10 @@ func parse(data string) (Config, error) {
 		if m.Provider != "" && !validProvider(m.Provider) {
 			drop("model %s provider %q is not supported", m.ID, m.Provider)
 			m.Provider = ""
+		}
+		if m.Provider == "" && c.Provider == "" {
+			drop("model %s has no provider", m.ID)
+			continue
 		}
 		models = append(models, m)
 	}

@@ -27,6 +27,7 @@ package ui
 
 import (
 	"context"
+	"os"
 
 	"charm.land/bubbles/v2/filepicker"
 	"charm.land/bubbles/v2/help"
@@ -39,9 +40,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
+	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
-	"github.com/dicedatalore/oolong/internal/openai"
 	providerroute "github.com/dicedatalore/oolong/internal/provider"
 )
 
@@ -72,12 +73,13 @@ type Model struct {
 	transcriptDir  string // transcript_dir from config; the env var wins
 
 	// Clients are cached by resolved provider and endpoint.
-	clients map[string]openai.ChatClient
+	clients map[string]chat.Client
 
 	// model picker
 	picker       list.Model
 	simplePicker bool   // compact one-line rows; tab toggles, simple_picker seeds
 	chosen       string // id of the picked model, e.g. "gpt-5.6-terra"
+	retryModel   bool   // picker is choosing a model to retry the last request
 
 	// chat
 	input    textarea.Model // message composer
@@ -86,20 +88,26 @@ type Model struct {
 	help     help.Model
 	keys     chatKeyMap
 	renderer *glamour.TermRenderer // markdown renderer, rebuilt on resize
-	messages []openai.Message
+	messages []chat.Message
 	// msgCache[i] is messages[i] rendered at cacheWidth. Completed messages
 	// render once; only the streaming message re-renders per delta.
-	msgCache   []string
-	cacheWidth int
-	waiting    bool // a request is in flight
-	errText    string
+	msgCache        []string
+	cacheWidth      int
+	waiting         bool // a request is in flight
+	errText         string
+	errorInfo       *chatErrorInfo
+	showErrorDetail bool
+	newOutputBelow  bool // streamed output arrived while the viewport was scrolled up
+	contextWarning  bool
+	contextPending  chat.Message
+	contextResend   bool // warning applies to retrying the latest user turn
 
 	// in-flight response stream (see stream.go)
-	stream        <-chan openai.StreamEvent
+	stream        <-chan chat.StreamEvent
 	cancelStream  context.CancelFunc
-	streaming     bool          // an in-progress assistant message is the last element of messages
-	pendingImages [][]byte      // pasted/attached images sent with the next message
-	pendingFiles  []openai.File // text files attached from disk, sent with the next message
+	streaming     bool        // an in-progress assistant message is the last element of messages
+	pendingImages [][]byte    // pasted/attached images sent with the next message
+	pendingFiles  []chat.File // text files attached from disk, sent with the next message
 
 	// attach-file picker (ctrl+f overlays the conversation)
 	filePicker  filepicker.Model
@@ -107,10 +115,17 @@ type Model struct {
 
 	// ↑/↓ history recall: the composer steps through previously sent
 	// messages while it holds an unedited recall (see recallActive).
-	recallIdx         int           // index into messages of the recalled message; -1 when none
-	recallText        string        // the text recallIdx was recalled as, to detect edits
-	recallSavedImages [][]byte      // pendingImages stashed when recall started
-	recallSavedFiles  []openai.File // pendingFiles stashed when recall started
+	recallIdx         int         // index into messages of the recalled message; -1 when none
+	recallText        string      // the text recallIdx was recalled as, to detect edits
+	recallSavedImages [][]byte    // pendingImages stashed when recall started
+	recallSavedFiles  []chat.File // pendingFiles stashed when recall started
+
+	// ctrl+u edits the latest user turn in place. The existing conversation is
+	// left untouched until the edited prompt is sent, so esc can cancel safely.
+	editIndex       int
+	editSavedText   string
+	editSavedImages [][]byte
+	editSavedFiles  []chat.File
 
 	// system prompt editing (ctrl+p repurposes the chat input)
 	systemPrompt  string
@@ -127,7 +142,8 @@ type Model struct {
 	inputTokens    int
 	outputTokens   int
 	costUSD        float64
-	estInputTokens int // estimated input tokens of the in-flight request
+	estInputTokens int  // estimated input tokens of the in-flight request
+	usageEstimated bool // session totals contain locally estimated usage
 
 	// API key manager. Inputs contain only newly typed values and are cleared
 	// immediately after a keychain save; stored secrets are never loaded here.
@@ -139,21 +155,29 @@ type Model struct {
 	keyErr            string
 	keyNotice         string
 	keyValidating     bool
+	spinnerColorStep  int // position in the primary ↔ secondary fade cycle
 
-	mdStyle    string // glamour style name matching the terminal background
-	resolver   *providerroute.Resolver
-	logo       string
-	sparkleTag int
-	initCmd    tea.Cmd // startup command, returned by Init
+	mdStyle       string // glamour style name matching the terminal background
+	resolver      *providerroute.Resolver
+	logo          string
+	sparkleTag    int
+	initCmd       tea.Cmd // startup command, returned by Init
+	reducedMotion bool
 }
 
 // New builds the initial model. The picker remains available without keys and
 // points to the key manager; cfgErr is surfaced without blocking launch.
-func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr string) Model {
+func New(client chat.Client, mdStyle string, cfg config.Config, cfgErr string) Model {
 	resolver := providerroute.NewResolver(cfg)
 	if client != nil {
-		globalRoute := resolver.RouteFor("")
-		injectedProvider, _ := providerroute.KeyProvider(resolver.RouteFor("").Provider)
+		// New's injected client stands in for the configured provider's global
+		// route. Per-model endpoints must still construct their own client.
+		injectedProviderName := providerroute.Name(cfg.Provider)
+		if injectedProviderName == "" {
+			injectedProviderName = resolver.RouteFor(resolver.FirstAvailableModel()).Provider
+		}
+		injectedRoute := providerroute.Route{Provider: injectedProviderName, BaseURL: cfg.BaseURL}
+		injectedProvider, _ := providerroute.KeyProvider(injectedProviderName)
 		resolveKey := resolver.ResolveKey
 		resolver.ResolveKey = func(provider keystore.Provider) string {
 			if provider == injectedProvider {
@@ -162,8 +186,8 @@ func New(client openai.ChatClient, mdStyle string, cfg config.Config, cfgErr str
 			return resolveKey(provider)
 		}
 		build := resolver.BuildClient
-		resolver.BuildClient = func(route providerroute.Route, key string) openai.ChatClient {
-			if route.Provider == globalRoute.Provider && route.BaseURL == globalRoute.BaseURL {
+		resolver.BuildClient = func(route providerroute.Route, key string) chat.Client {
+			if route.Provider == injectedRoute.Provider && route.BaseURL == injectedRoute.BaseURL {
 				return client
 			}
 			return build(route, key)
@@ -178,7 +202,8 @@ func NewWithResolver(resolver *providerroute.Resolver, mdStyle string, cfg confi
 }
 
 func newModel(resolver *providerroute.Resolver, mdStyle string, cfg config.Config, cfgErr string) Model {
-	theme := newTheme(cfg.Accent)
+	_, noColor := os.LookupEnv("NO_COLOR")
+	theme := newTheme(cfg.Accent, cfg.SecondaryAccent, noColor)
 	m := Model{
 		theme:             theme,
 		state:             statePicker,
@@ -197,8 +222,10 @@ func newModel(resolver *providerroute.Resolver, mdStyle string, cfg config.Confi
 		logo:              renderLogoHeader(theme),
 		transcriptDir:     cfg.TranscriptDir,
 		recallIdx:         -1,
+		editIndex:         -1,
+		reducedMotion:     cfg.ReducedMotion,
 	}
-	m.initCmd = sparkleTick(0)
+	m.initCmd = m.sparkleCmd()
 	if cfg.CustomCatalog() {
 		m.setCatalog(cfg.Catalog())
 	} else {
@@ -223,14 +250,14 @@ func newModel(resolver *providerroute.Resolver, mdStyle string, cfg config.Confi
 }
 
 // clientFor returns the cached client for a fully resolved model route.
-func (m *Model) clientFor(id string) openai.ChatClient {
+func (m *Model) clientFor(id string) chat.Client {
 	route := m.resolver.RouteFor(id)
 	cacheKey := string(route.Provider) + "\x00" + route.BaseURL
 	if c, ok := m.clients[cacheKey]; ok {
 		return c
 	}
 	if m.clients == nil {
-		m.clients = make(map[string]openai.ChatClient)
+		m.clients = make(map[string]chat.Client)
 	}
 	c := m.resolver.ClientFor(id)
 	if c == nil {
@@ -243,8 +270,22 @@ func (m *Model) clientFor(id string) openai.ChatClient {
 func newSpinner(theme theme) spinner.Model {
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
-	spin.Style = lipgloss.NewStyle().Foreground(theme.accent)
+	spin.Style = lipgloss.NewStyle().Foreground(logoColor(0, theme))
 	return spin
+}
+
+// spinnerFadePosition moves from primary to secondary and back over a
+// 32-frame cycle, avoiding a hard color jump when the animation loops.
+func spinnerFadePosition(step int) float64 {
+	const halfCycle = 16
+	step %= halfCycle * 2
+	if step < 0 {
+		step += halfCycle * 2
+	}
+	if step > halfCycle {
+		step = halfCycle*2 - step
+	}
+	return float64(step) / halfCycle
 }
 
 // Init is called once by the Bubble Tea runtime and returns the first
@@ -285,6 +326,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
+		if !m.reducedMotion && !m.theme.noColor {
+			m.spinnerColorStep++
+			m.spin.Style = m.spin.Style.Foreground(logoColor(spinnerFadePosition(m.spinnerColorStep), m.theme))
+		}
 		return m, cmd
 	}
 
@@ -299,27 +344,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) sparkleCmd() tea.Cmd {
+	if m.reducedMotion {
+		return nil
+	}
+	return sparkleTick(m.sparkleTag)
+}
+
+func (m Model) activityCmd(cmds ...tea.Cmd) tea.Cmd {
+	if !m.reducedMotion {
+		cmds = append([]tea.Cmd{m.spin.Tick}, cmds...)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) activityIndicator() string {
+	if m.reducedMotion {
+		return "•"
+	}
+	return m.spin.View()
+}
+
+// centeredBar gives every screen the same full-width, centered treatment for
+// shortcut help and transient status text. Align applies to each line, so an
+// expanded or wrapped bar remains visually centered too.
+func centeredBar(width int, content string) string {
+	return lipgloss.NewStyle().
+		Width(max(1, width)).
+		Align(lipgloss.Center).
+		Render(content)
+}
+
 // handleResize records the new window size and re-lays-out the widgets.
 // Bubble Tea delivers a WindowSizeMsg at startup, so this also establishes
 // the initial sizes.
 func (m Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
-	m.width = msg.Width
-	m.height = msg.Height
-	m.help.SetWidth(msg.Width - m.theme.page.GetHorizontalFrameSize())
+	m.width = max(1, msg.Width)
+	m.height = max(1, msg.Height)
+	page := m.pageStyle()
+	contentWidth := max(1, m.width-page.GetHorizontalFrameSize())
+	m.help.SetWidth(contentWidth)
 	// Reserve a line for the bottom command bar plus a gap above it,
 	// and room for the logo (with a gap below) when it fits.
-	pickerHeight := msg.Height - m.theme.page.GetVerticalFrameSize() - 2
+	pickerHeight := m.height - page.GetVerticalFrameSize() - 2
 	if logo := m.pickerLogo(); logo != "" {
 		pickerHeight -= lipgloss.Height(logo) + 1
 	}
-	m.picker.SetSize(
-		msg.Width-m.theme.page.GetHorizontalFrameSize(),
-		pickerHeight,
-	)
+	m.picker.SetSize(contentWidth, max(1, pickerHeight))
 	// SetSize stretches the filter input to the list's full width, which
 	// makes the centered block span the whole window while filtering.
 	// Cap it so the filter row stays about as wide as the list items.
-	m.picker.FilterInput.SetWidth(20)
+	m.picker.FilterInput.SetWidth(min(20, max(1, contentWidth-10)))
 	if m.state == stateChat {
 		m.layoutChat()
 	}

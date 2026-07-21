@@ -11,7 +11,7 @@ import (
 
 	"google.golang.org/genai"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 // Client streams Gemini responses. The genai client is rebuilt per request:
@@ -40,9 +40,9 @@ func (c *Client) api(ctx context.Context) (*genai.Client, error) {
 	return genai.NewClient(ctx, cfg)
 }
 
-func (c *Client) StreamChat(ctx context.Context, model string, messages []openai.Message, opts openai.Options, ch chan<- openai.StreamEvent) {
+func (c *Client) StreamChat(ctx context.Context, model string, messages []chat.Message, opts chat.Options, ch chan<- chat.StreamEvent) {
 	defer close(ch)
-	emit := func(event openai.StreamEvent) bool {
+	emit := func(event chat.StreamEvent) bool {
 		select {
 		case ch <- event:
 			return true
@@ -53,7 +53,7 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []openai
 
 	api, err := c.api(ctx)
 	if err != nil {
-		emit(openai.StreamEvent{Err: fmt.Errorf("google: %v", err)})
+		emit(chat.StreamEvent{Err: fmt.Errorf("google: %v", err)})
 		return
 	}
 
@@ -88,11 +88,11 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []openai
 		config.ThinkingConfig = &genai.ThinkingConfig{ThinkingLevel: level}
 	}
 
-	var usage openai.Usage
+	var usage chat.Usage
 	for resp, err := range api.Models.GenerateContentStream(ctx, model, contents, config) {
 		if err != nil {
 			if ctx.Err() == nil {
-				emit(openai.StreamEvent{Err: apiError(err)})
+				emit(chat.StreamEvent{Err: apiError(err)})
 			}
 			return
 		}
@@ -105,12 +105,12 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []openai
 			}
 		}
 		if delta := text(resp); delta != "" {
-			if !emit(openai.StreamEvent{Delta: delta}) {
+			if !emit(chat.StreamEvent{Delta: delta}) {
 				return
 			}
 		}
 	}
-	emit(openai.StreamEvent{Done: true, Usage: usage})
+	emit(chat.StreamEvent{Done: true, Usage: usage})
 }
 
 // text concatenates a chunk's visible text parts. The SDK's Text() helper is
@@ -149,7 +149,7 @@ func thinkingLevel(effort string) genai.ThinkingLevel {
 	return genai.ThinkingLevel(strings.ToUpper(effort))
 }
 
-func fileBlock(file openai.File) string {
+func fileBlock(file chat.File) string {
 	fence := "```"
 	for strings.Contains(file.Text, fence) {
 		fence += "`"

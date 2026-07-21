@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/zalando/go-keyring"
 
 	"github.com/dicedatalore/oolong/internal/config"
@@ -35,6 +36,14 @@ func TestPickerHelpHasNoFullHelpToggle(t *testing.T) {
 	}
 }
 
+func TestPickerProviderHeadersAreQuietLabels(t *testing.T) {
+	model := newBuiltinPicker(t, config.Config{})
+	view := model.(Model).picker.View()
+	if !strings.Contains(view, "OPENAI") || strings.Contains(view, model.(Model).theme.header.Render("OpenAI")) {
+		t.Errorf("provider heading still uses the high-contrast badge: %q", view)
+	}
+}
+
 func TestPickerHidesReasoningHelpWithoutModels(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")
@@ -49,6 +58,34 @@ func TestPickerHidesReasoningHelpWithoutModels(t *testing.T) {
 	}
 	if !strings.Contains(help, "key manager") {
 		t.Errorf("empty picker hides key manager help: %q", help)
+	}
+}
+
+func TestPickerSurvivesCompactTerminal(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	var model tea.Model = New(nil, "dark", config.Config{}, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 24, Height: 8})
+	view := model.(Model).viewPicker()
+	if width, height := lipgloss.Width(view), lipgloss.Height(view); width > 24 || height > 8 {
+		t.Errorf("compact picker rendered %dx%d", width, height)
+	}
+}
+
+func TestEmptyPickerGuidesFirstRun(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	var model tea.Model = New(nil, "dark", config.Config{}, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 90, Height: 30})
+	view := ansi.ReplaceAllString(model.(Model).viewPicker(), "")
+	for _, want := range []string{"Welcome to Oolong", "ctrl+k", "oolong config init", "oolong doctor", "OS keychain", "environment variables win"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("first-run view missing %q:\n%s", want, view)
+		}
 	}
 }
 
@@ -200,6 +237,19 @@ func TestSimplePickerConfigStartsSimple(t *testing.T) {
 	}
 	if h := pickerHeaders(am); h != nil {
 		t.Errorf("simple view shows provider headers: %v", h)
+	}
+}
+
+func TestSimplePickerListCentersAsAlignedBlock(t *testing.T) {
+	view := centerPickerBlock("one\nlonger", 12)
+	lines := strings.Split(view, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("centered block has %d lines, want 2", len(lines))
+	}
+	for i, line := range lines {
+		if got := len(line) - len(strings.TrimLeft(line, " ")); got != 3 {
+			t.Errorf("line %d starts at column %d, want 3: %q", i, got, line)
+		}
 	}
 }
 

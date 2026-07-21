@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/openai/openai-go/v3/option"
+
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 func clientFor(srv *httptest.Server) *Client {
@@ -35,8 +37,8 @@ func TestStreamChatDeltasAndUsage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ch := make(chan StreamEvent)
-	go clientFor(srv).StreamChat(context.Background(), "m", nil, Options{}, ch)
+	ch := make(chan chat.StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", nil, chat.Options{}, ch)
 
 	var got string
 	var deltas int
@@ -66,8 +68,8 @@ func TestStreamChatAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ch := make(chan StreamEvent)
-	go clientFor(srv).StreamChat(context.Background(), "m", nil, Options{}, ch)
+	ch := make(chan chat.StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", nil, chat.Options{}, ch)
 
 	ev := <-ch
 	if ev.Err == nil || ev.Err.Error() != "openai: bad key" {
@@ -88,9 +90,9 @@ func TestStreamChatSendsImages(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	msgs := []Message{{Role: "user", Content: "look", Images: [][]byte{{1, 2, 3}}}}
-	ch := make(chan StreamEvent)
-	go clientFor(srv).StreamChat(context.Background(), "m", msgs, Options{}, ch)
+	msgs := []chat.Message{{Role: "user", Content: "look", Images: [][]byte{{1, 2, 3}}}}
+	ch := make(chan chat.StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", msgs, chat.Options{}, ch)
 	for ev := range ch {
 		if ev.Err != nil {
 			t.Fatalf("unexpected error: %v", ev.Err)
@@ -118,14 +120,14 @@ func TestStreamChatSendsFilesAndSniffsImageMIME(t *testing.T) {
 	defer srv.Close()
 
 	jpeg := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0}
-	msgs := []Message{{
+	msgs := []chat.Message{{
 		Role:    "user",
 		Content: "review this",
-		Files:   []File{{Name: "main.go", Text: "package main\n"}},
+		Files:   []chat.File{{Name: "main.go", Text: "package main\n"}},
 		Images:  [][]byte{jpeg},
 	}}
-	ch := make(chan StreamEvent)
-	go clientFor(srv).StreamChat(context.Background(), "m", msgs, Options{}, ch)
+	ch := make(chan chat.StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", msgs, chat.Options{}, ch)
 	for ev := range ch {
 		if ev.Err != nil {
 			t.Fatalf("unexpected error: %v", ev.Err)
@@ -144,7 +146,7 @@ func TestStreamChatSendsFilesAndSniffsImageMIME(t *testing.T) {
 }
 
 func TestFileBlockGrowsFencePastContent(t *testing.T) {
-	got := fileBlock(File{Name: "notes.md", Text: "```go\ncode\n```\n"})
+	got := fileBlock(chat.File{Name: "notes.md", Text: "```go\ncode\n```\n"})
 	if !strings.Contains(got, "````\n```go\ncode\n```\n````") {
 		t.Errorf("fence not grown past the content's own fence:\n%s", got)
 	}
@@ -160,8 +162,8 @@ func TestStreamChatSendsOptions(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	drain := func(opts Options) string {
-		ch := make(chan StreamEvent)
+	drain := func(opts chat.Options) string {
+		ch := make(chan chat.StreamEvent)
 		go clientFor(srv).StreamChat(context.Background(), "m", nil, opts, ch)
 		for ev := range ch {
 			if ev.Err != nil {
@@ -171,7 +173,7 @@ func TestStreamChatSendsOptions(t *testing.T) {
 		return string(body)
 	}
 
-	got := drain(Options{ReasoningEffort: "high", Verbosity: "low"})
+	got := drain(chat.Options{ReasoningEffort: "high", Verbosity: "low"})
 	for _, want := range []string{
 		`"reasoning":{"effort":"high"}`,
 		`"text":{"verbosity":"low"}`,
@@ -182,7 +184,7 @@ func TestStreamChatSendsOptions(t *testing.T) {
 	}
 
 	// Zero options must omit the parameters, leaving the server defaults.
-	got = drain(Options{})
+	got = drain(chat.Options{})
 	for _, banned := range []string{`"reasoning"`, `"verbosity"`} {
 		if strings.Contains(got, banned) {
 			t.Errorf("request body has %s despite zero options:\n%s", banned, got)
@@ -198,8 +200,8 @@ func TestStreamChatFailedResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ch := make(chan StreamEvent)
-	go clientFor(srv).StreamChat(context.Background(), "m", nil, Options{}, ch)
+	ch := make(chan chat.StreamEvent)
+	go clientFor(srv).StreamChat(context.Background(), "m", nil, chat.Options{}, ch)
 
 	ev := <-ch
 	if ev.Err == nil || ev.Err.Error() != "openai: boom" {
@@ -224,10 +226,10 @@ func TestStreamChatCancel(t *testing.T) {
 	defer close(release)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan StreamEvent)
+	ch := make(chan chat.StreamEvent)
 	done := make(chan struct{})
 	go func() {
-		clientFor(srv).StreamChat(ctx, "m", nil, Options{}, ch)
+		clientFor(srv).StreamChat(ctx, "m", nil, chat.Options{}, ch)
 		close(done)
 	}()
 

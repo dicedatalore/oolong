@@ -12,14 +12,15 @@ import (
 // value owned by one Model, so constructing a second UI cannot inherit global
 // style mutations from the first.
 type theme struct {
-	accent, accentDim                            color.Color
-	page, headerBar, header, inputRow, bottomBar lipgloss.Style
-	userLabel, botLabel, userBlock, botBlock     lipgloss.Style
-	help, notice, err                            lipgloss.Style
-	logoFrom, logoTo                             [3]int
+	accent, accentDim                                      color.Color
+	page, headerBar, header, inputRow, composer, bottomBar lipgloss.Style
+	userLabel, botLabel, userBlock, botBlock               lipgloss.Style
+	help, notice, err                                      lipgloss.Style
+	logoFrom, logoTo                                       [3]int
+	noColor                                                bool
 }
 
-func newTheme(accent string) theme {
+func newTheme(accent, secondaryAccent string, noColor bool) theme {
 	if accent == "" {
 		accent = "#FFAF87"
 	}
@@ -32,15 +33,25 @@ func newTheme(accent string) theme {
 	dim := func(c int) int { return int(float64(c) * 0.79) }
 	primary := lipgloss.Color(accent)
 	primaryDim := lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", dim(r), dim(g), dim(b)))
-	secondary := lipgloss.Color("#7D56F4")
-	return theme{
+	if secondaryAccent == "" {
+		secondaryAccent = "#7D56F4"
+	}
+	sv, err := strconv.ParseUint(secondaryAccent[1:], 16, 32)
+	if err != nil {
+		sv = 0x7D56F4
+		secondaryAccent = "#7D56F4"
+	}
+	sr, sg, sb := int(sv>>16&0xFF), int(sv>>8&0xFF), int(sv&0xFF)
+	secondary := lipgloss.Color(secondaryAccent)
+	t := theme{
 		accent:    primary,
 		accentDim: primaryDim,
 		page:      lipgloss.NewStyle().Padding(1, 1),
 		headerBar: lipgloss.NewStyle().Padding(0, 0, 1, 2),
 		header:    lipgloss.NewStyle().Foreground(lipgloss.Color("235")).Background(primary).Padding(0, 1),
 		inputRow:  lipgloss.NewStyle(),
-		bottomBar: lipgloss.NewStyle().Padding(1, 0, 0, 2),
+		composer:  lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true, false, false, false).BorderForeground(lipgloss.Color("238")),
+		bottomBar: lipgloss.NewStyle().PaddingTop(1),
 		userLabel: lipgloss.NewStyle().Bold(true).Foreground(primary),
 		botLabel:  lipgloss.NewStyle().Bold(true).Foreground(secondary),
 		userBlock: lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(primary).PaddingLeft(1),
@@ -49,6 +60,32 @@ func newTheme(accent string) theme {
 		notice:    lipgloss.NewStyle().Foreground(primary),
 		err:       lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")),
 		logoFrom:  [3]int{r, g, b},
-		logoTo:    [3]int{0x7D, 0x56, 0xF4},
+		logoTo:    [3]int{sr, sg, sb},
+		noColor:   noColor,
 	}
+	if noColor {
+		t.accent = lipgloss.NoColor{}
+		t.accentDim = lipgloss.NoColor{}
+		t.header = lipgloss.NewStyle().Reverse(true).Padding(0, 1)
+		t.composer = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true, false, false, false)
+		t.userLabel = lipgloss.NewStyle().Bold(true)
+		t.botLabel = lipgloss.NewStyle().Bold(true)
+		t.userBlock = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).PaddingLeft(1)
+		t.botBlock = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).PaddingLeft(1)
+		t.help = lipgloss.NewStyle().Faint(true)
+		t.notice = lipgloss.NewStyle().Bold(true)
+		t.err = lipgloss.NewStyle().Bold(true)
+	}
+	return t
+}
+
+func (m Model) pageStyle() lipgloss.Style {
+	page := m.theme.page
+	if m.height < 10 {
+		page = page.PaddingTop(0).PaddingBottom(0)
+	}
+	if m.width < 20 {
+		page = page.PaddingLeft(0).PaddingRight(0)
+	}
+	return page
 }

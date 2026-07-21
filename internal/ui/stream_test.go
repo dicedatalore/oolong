@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 // pumpStream feeds every event from the in-flight stream through Update,
@@ -92,7 +93,7 @@ func TestStaleStreamEventIgnoredAfterRestart(t *testing.T) {
 
 	// A stale done event must not cancel the new stream or book usage.
 	model, _ = model.Update(streamEventMsg{
-		StreamEvent: openai.StreamEvent{Done: true, Usage: openai.Usage{InputTokens: 9, OutputTokens: 9}},
+		StreamEvent: chat.StreamEvent{Done: true, Usage: chat.Usage{InputTokens: 9, OutputTokens: 9}},
 		ch:          oldCh,
 	})
 	am = model.(Model)
@@ -118,13 +119,42 @@ func TestStreamErrorShowsMessage(t *testing.T) {
 	model = pumpStream(t, model)
 
 	am := model.(Model)
-	if am.errText != "openai: boom" {
-		t.Errorf("errText = %q, want %q", am.errText, "openai: boom")
+	if am.errText != "Request failed" || am.errorInfo == nil || am.errorInfo.detail != "openai: boom" {
+		t.Errorf("error state = %q / %#v", am.errText, am.errorInfo)
 	}
 	if am.waiting {
 		t.Error("still waiting after stream error")
 	}
 	if n := len(am.messages); n != 1 {
 		t.Errorf("len(messages) = %d, want 1 (no assistant message on error)", n)
+	}
+}
+
+func TestUsageAccountingKeepsReportedAndEstimatedValuesWithoutLabels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":7,\"output_tokens\":2}}}\n\n")
+	}))
+	defer srv.Close()
+	model := enterChat(t, srv)
+	model = typeText(model, "hello")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = pumpStream(t, model)
+	if header := model.(Model).chatHeader(); !strings.Contains(header, "7 in / 2 out") || strings.Contains(header, "reported") {
+		t.Errorf("provider usage header = %q", header)
+	}
+
+	am := model.(Model)
+	am.waiting = true
+	am.estInputTokens = 12
+	am.streaming = true
+	am.messages = append(am.messages, chat.Message{Role: "assistant", Content: "estimated output"})
+	ch := make(chan chat.StreamEvent)
+	am.stream = ch
+	model, _ = am.handleStreamEvent(streamEventMsg{StreamEvent: chat.StreamEvent{Done: true}, ch: ch})
+	am = model.(Model)
+	header := am.chatHeader()
+	if !am.usageEstimated || strings.Contains(header, "estimated") || strings.Contains(header, "reported") {
+		t.Errorf("estimated usage state or header is wrong: estimated=%v header=%q", am.usageEstimated, header)
 	}
 }

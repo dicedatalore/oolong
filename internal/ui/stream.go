@@ -1,7 +1,7 @@
 package ui
 
 // Streaming a reply is a loop between a background goroutine and Update:
-// startStream launches openai.StreamChat on a goroutine that writes events
+// startStream launches chat.StreamChat on a goroutine that writes events
 // to a channel, and readStream is a tea.Cmd that receives ONE event and
 // delivers it to Update as a streamEventMsg. handleStreamEvent applies the
 // event and issues readStream again, so events arrive one message at a time
@@ -15,34 +15,34 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 // streamEventMsg carries one event from an in-flight stream, tagged with the
 // channel it came from so an event queued by an already-abandoned stream can
 // be told apart from the current one and dropped.
 type streamEventMsg struct {
-	openai.StreamEvent
-	ch <-chan openai.StreamEvent
+	chat.StreamEvent
+	ch <-chan chat.StreamEvent
 }
 
 // startStream kicks off a streaming completion for the current transcript
 // (prefixed with the system prompt, if set) and returns the command that
 // waits for the first event.
 func (m *Model) startStream() tea.Cmd {
-	history := make([]openai.Message, 0, len(m.messages)+1)
+	history := make([]chat.Message, 0, len(m.messages)+1)
 	if m.systemPrompt != "" {
-		history = append(history, openai.Message{Role: "system", Content: m.systemPrompt})
+		history = append(history, chat.Message{Role: "system", Content: m.systemPrompt})
 	}
 	history = append(history, m.messages...)
 	m.estInputTokens = estimateTokens(m.transcriptChars())
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan openai.StreamEvent)
+	ch := make(chan chat.StreamEvent)
 	m.stream = ch
 	m.cancelStream = cancel
 	m.streaming = false
 	cm := m.modelConfig(m.chosen)
-	opts := openai.Options{
+	opts := chat.Options{
 		ReasoningEffort: cm.ReasoningEffort,
 		Verbosity:       cm.Verbosity,
 	}
@@ -53,7 +53,7 @@ func (m *Model) startStream() tea.Cmd {
 // readStream waits for the next event from the in-flight stream. It is
 // re-issued from handleStreamEvent after each delta so events arrive one
 // per message.
-func readStream(ch <-chan openai.StreamEvent) tea.Cmd {
+func readStream(ch <-chan chat.StreamEvent) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-ch
 		if !ok {
@@ -77,12 +77,61 @@ func estimateTokens(chars int) int {
 func (m Model) transcriptChars() int {
 	chars := len(m.systemPrompt)
 	for _, msg := range m.messages {
-		chars += len(msg.Content)
-		for _, f := range msg.Files {
-			chars += len(f.Text)
-		}
+		chars += messageChars(msg)
 	}
 	return chars
+}
+
+func messageChars(msg chat.Message) int {
+	chars := len(msg.Content) + len(msg.Images)*4000 // conservative image-token allowance
+	for _, f := range msg.Files {
+		chars += len(f.Text)
+	}
+	return chars
+}
+
+func (m Model) contextWarningFor(pending chat.Message) (int, bool) {
+	window := m.modelConfig(m.chosen).ContextWindow
+	if window <= 0 {
+		return 0, false
+	}
+	chars := len(m.systemPrompt) + messageChars(pending)
+	history := m.messages
+	if m.editIndex >= 0 {
+		history = history[:m.editIndex]
+	}
+	for _, msg := range history {
+		chars += messageChars(msg)
+	}
+	pct := 100 * estimateTokens(chars) / window
+	// Reserve roughly 10% for the response and token-estimation error.
+	return pct, pct >= 90
+}
+
+func (m Model) resendContextWarning() (int, bool) {
+	window := m.modelConfig(m.chosen).ContextWindow
+	if window <= 0 {
+		return 0, false
+	}
+	chars := len(m.systemPrompt)
+	history := m.messages
+	if len(history) > 0 && history[len(history)-1].Role == "assistant" {
+		history = history[:len(history)-1]
+	}
+	for _, msg := range history {
+		chars += messageChars(msg)
+	}
+	pct := 100 * estimateTokens(chars) / window
+	return pct, pct >= 90
+}
+
+func (m Model) contextWarningPercent() int {
+	if m.contextResend {
+		pct, _ := m.resendContextWarning()
+		return pct
+	}
+	pct, _ := m.contextWarningFor(m.contextPending)
+	return pct
 }
 
 // contextUsed estimates how much of the model's context window the
@@ -114,6 +163,9 @@ func (m Model) streamEstimate() (in, out int) {
 // incurred cost, but its usage report will never arrive.
 func (m *Model) settleStreamEstimate() {
 	in, out := m.streamEstimate()
+	if in > 0 || out > 0 {
+		m.usageEstimated = true
+	}
 	m.inputTokens += in
 	m.outputTokens += out
 	if r, ok := m.rates[m.chosen]; ok {
@@ -144,23 +196,33 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case msg.Err != nil:
+		m.settleStreamEstimate()
 		m.finishStream()
-		m.errText = msg.Err.Error()
+		m.errorInfo = classifyChatError(msg.Err)
+		m.errText = m.errorInfo.summary
+		m.showErrorDetail = false
+		m.layoutChat()
 		return m, nil
 	case msg.Done:
+		estIn, estOut := m.streamEstimate()
 		m.finishStream()
-		m.inputTokens += msg.Usage.InputTokens
-		m.outputTokens += msg.Usage.OutputTokens
+		usage := msg.Usage
+		if usage.InputTokens == 0 && usage.OutputTokens == 0 {
+			usage = chat.Usage{InputTokens: estIn, OutputTokens: estOut}
+			m.usageEstimated = true
+		}
+		m.inputTokens += usage.InputTokens
+		m.outputTokens += usage.OutputTokens
 		if r, ok := m.rates[m.chosen]; ok {
-			m.costUSD += float64(msg.Usage.InputTokens)/1e6*r.input +
-				float64(msg.Usage.OutputTokens)/1e6*r.output
+			m.costUSD += float64(usage.InputTokens)/1e6*r.input +
+				float64(usage.OutputTokens)/1e6*r.output
 		}
 		return m, nil
 	default:
 		// First delta: append the assistant message the deltas build up in.
 		if !m.streaming {
 			m.streaming = true
-			m.messages = append(m.messages, openai.Message{Role: "assistant", Model: m.chosen})
+			m.messages = append(m.messages, chat.Message{Role: "assistant", Model: m.chosen})
 		}
 		m.messages[len(m.messages)-1].Content += msg.Delta
 		// Keep following the newest text only if the user hasn't scrolled up.
@@ -168,6 +230,9 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 		m.vp.SetContent(m.conversationView())
 		if atBottom {
 			m.vp.GotoBottom()
+			m.newOutputBelow = false
+		} else {
+			m.newOutputBelow = true
 		}
 		return m, readStream(m.stream)
 	}

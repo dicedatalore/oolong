@@ -11,6 +11,9 @@ import (
 
 var initOnce = sync.OnceValue(xclipboard.Init)
 
+// Supported reports whether this build includes clipboard image support.
+func Supported() bool { return true }
+
 // Image returns the system clipboard's image as PNG bytes, or nil if the
 // clipboard holds no image.
 func Image() ([]byte, error) {

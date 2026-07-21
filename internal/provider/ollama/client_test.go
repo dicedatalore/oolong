@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
 func TestStreamChat(t *testing.T) {
@@ -26,11 +26,11 @@ func TestStreamChat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	msgs := []openai.Message{{Role: "user", Content: "look", Files: []openai.File{{Name: "a.txt", Text: "text"}}, Images: [][]byte{{1, 2, 3}}}}
-	ch := make(chan openai.StreamEvent)
-	go New(srv.URL+"/v1").StreamChat(context.Background(), "gemma3", msgs, openai.Options{ReasoningEffort: "none"}, ch)
+	msgs := []chat.Message{{Role: "user", Content: "look", Files: []chat.File{{Name: "a.txt", Text: "text"}}, Images: [][]byte{{1, 2, 3}}}}
+	ch := make(chan chat.StreamEvent)
+	go New(srv.URL+"/v1").StreamChat(context.Background(), "gemma3", msgs, chat.Options{ReasoningEffort: "none"}, ch)
 	var got string
-	var usage openai.Usage
+	var usage chat.Usage
 	for ev := range ch {
 		if ev.Err != nil {
 			t.Fatal(ev.Err)
@@ -59,8 +59,8 @@ func TestStreamError(t *testing.T) {
 		fmt.Fprint(w, `{"error":"model not found"}`)
 	}))
 	defer srv.Close()
-	ch := make(chan openai.StreamEvent)
-	go New(srv.URL).StreamChat(context.Background(), "missing", nil, openai.Options{}, ch)
+	ch := make(chan chat.StreamEvent)
+	go New(srv.URL).StreamChat(context.Background(), "missing", nil, chat.Options{}, ch)
 	ev := <-ch
 	if ev.Err == nil || ev.Err.Error() != "ollama: model not found" {
 		t.Errorf("err = %v", ev.Err)
@@ -78,8 +78,8 @@ func TestStreamChatCancel(t *testing.T) {
 	}))
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan openai.StreamEvent)
-	go New(srv.URL).StreamChat(ctx, "gemma3", nil, openai.Options{}, ch)
+	ch := make(chan chat.StreamEvent)
+	go New(srv.URL).StreamChat(ctx, "gemma3", nil, chat.Options{}, ch)
 	<-started
 	cancel()
 	select {

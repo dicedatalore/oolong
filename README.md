@@ -22,6 +22,7 @@
 - **Native provider support** — OpenAI, Anthropic, Google, and Ollama clients stream text, images, files, system prompts, effort, and usage through their respective APIs
 - **Custom OpenAI endpoints** — use the OpenAI client with a custom `base_url` for services such as LM Studio and OpenRouter, globally or per model
 - **Context meter** — the chat header tracks how much of the model's context window the conversation fills, and warns as it nears the limit
+- **Recoverable failures** — common provider errors are translated into a short explanation and next step, with `ctrl+i` retaining access to the original technical detail
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
 - **Transcript export & resume** — `ctrl+s` saves the conversation as a timestamped markdown file; `oolong --resume <file>` picks it back up later
 - **Configurable** — an optional TOML config file sets a custom model catalog, a default model, reasoning effort and verbosity, endpoints, transcript directory, and accent color
@@ -68,6 +69,10 @@ Prefer a standalone binary? Prebuilt archives for macOS, Linux, and Windows are 
 2. Press `ctrl+k` to open the key manager. It accepts OpenAI, Anthropic, and Google keys and stores them only in your OS keychain. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY` take precedence when set.
 3. Pick a model and start chatting.
 
+If setup is not behaving as expected, `oolong doctor` reports the config path,
+credential sources, configured providers, and clipboard capabilities without
+printing secrets or contacting a provider.
+
 To add, replace, or remove a provider key, press `ctrl+k` on the model picker. `oolong --reset-key` removes all stored provider keys.
 
 ## Configuration
@@ -80,7 +85,9 @@ The catalog below demonstrates all four clients in one configuration. Adding any
 default_model = "gpt-5.6-terra"   # skip the picker on launch
 transcript_dir = "~/notes/chats"  # OOLONG_TRANSCRIPT_DIR still wins
 accent = "#FFAF87"                # primary accent color
+secondary_accent = "#7D56F4"      # assistant messages and logo gradient
 simple_picker = true              # start the picker in its simple view (tab toggles)
+reduced_motion = true             # disable decorative animation
 
 # OpenAI client — uses the official Responses API when base_url is omitted.
 [[models]]
@@ -122,11 +129,31 @@ base_url = "http://localhost:11434"
 context_window = 128000
 ```
 
+Every custom model must set `provider`, unless a global `provider` is set for
+models to inherit. For a model outside the configured catalog, use
+`oolong --model MODEL --provider PROVIDER`; Oolong does not infer a provider
+from a model name.
+
 For a single run, `oolong --model <id>` opens a chat directly with a configured model, overriding `default_model`.
 
 `provider` selects the client and may be `openai`, `anthropic`, `google`, or `ollama`. It can be set globally or per model; per-model values let one catalog mix providers. A global `base_url` is inherited by models using the global provider, while a per-model value overrides it. Models selecting another provider use that provider's official endpoint unless they set their own `base_url`.
 
 `reasoning_effort` sets the provider's effort parameter; `verbosity` applies only to OpenAI's Responses API. Values are passed through because support varies by model generation. On the model picker, `←`/`→` adjust effort for the session. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
+
+### Provider differences
+
+| Provider | API | Credentials | Notable behavior |
+| --- | --- | --- | --- |
+| OpenAI | Responses API | `OPENAI_API_KEY` or keychain | Server-side response storage is disabled. `verbosity` is supported when the selected model accepts it. |
+| Anthropic | Messages API | `ANTHROPIC_API_KEY` or keychain | Uses Anthropic-native system prompts, images, streaming, effort, and usage fields. |
+| Google | Gemini API | `GEMINI_API_KEY` or keychain | Uses Gemini-native content parts, streaming, thinking level, and usage metadata. |
+| Ollama | Native `/api/chat` | None | Requires a reachable local/configured server. Rates are unknown unless supplied in config. |
+
+Images and text-file attachments are translated into each provider's native
+request shape. Model support for images, reasoning effort, and very large
+inputs still varies; unsupported-feature errors remain available through
+`ctrl+i`. OpenAI-compatible endpoints use the OpenAI client but may differ
+from OpenAI in authentication, models, usage reporting, and optional fields.
 
 ### Custom OpenAI endpoints
 
@@ -162,11 +189,11 @@ Transcripts saved with `ctrl+s` can be picked back up later:
 oolong --resume oolong-chat-2026-07-19-094035.md
 ```
 
-The conversation, system prompt, model, and attachments are restored from a
-versioned metadata block in the Markdown file. Nothing is ever loaded
-implicitly — resume only reads a file you name. Because saved transcripts are
-lossless, their metadata contains the contents of attached files and images;
-treat transcript files as private data.
+Transcript files contain only the readable Markdown shown when you open them;
+there is no hidden metadata. Resume reconstructs the conversation, system
+prompt, and model from that text. Attachment names and image counts resume as
+text labels, but the original attachment contents are not saved. Nothing is
+ever loaded implicitly — resume only reads a file you name.
 
 ## Keybindings
 
@@ -176,11 +203,15 @@ treat transcript files as private data.
 | `shift+enter` / `ctrl+j` | Insert newline |
 | `ctrl+v` | Paste (a clipboard image becomes an attachment) |
 | `ctrl+f` | Attach an image or text file from disk |
-| `ctrl+e` | Compose the message in `$EDITOR` |
 | `ctrl+y` | Copy the last reply to the clipboard |
 | `ctrl+b` | Copy the last reply's last code block |
 | `ctrl+r` | Regenerate the last reply |
+| `ctrl+u` | Edit the latest user message and regenerate from it |
+| `ctrl+t` | Retry the last request with another model |
+| `ctrl+k` | Open the provider key manager from an error |
+| `ctrl+i` | Show or hide technical error details |
 | `↑` / `↓` | Cycle through your sent messages, attachments included (when the composer is empty) |
+| `ctrl+d` / `alt+d` | Remove the last pending attachment / clear all pending attachments |
 | `ctrl+n` | Start a new chat |
 | `ctrl+p` | Edit the system prompt |
 | `ctrl+s` | Save transcript to markdown |
@@ -192,7 +223,19 @@ treat transcript files as private data.
 
 On the model picker, `←`/`→` adjust the selected model's reasoning effort before the chat starts, `tab` toggles between the full view (descriptions, rates, provider headings) and a simple one-line-per-model view, and `esc` clears an active filter before it quits. Set `simple_picker = true` in the config to start in the simple view.
 
+Oolong progressively simplifies its header, help, onboarding, and key manager
+in narrow or short terminal panes. Set `NO_COLOR=1` to remove color while
+retaining bold, borders, and other non-color focus cues. Set
+`reduced_motion = true` to disable decorative animation and use a static
+activity indicator.
+
 The mouse wheel scrolls the conversation too; hold `shift` while dragging to select text, as usual in TUIs.
+
+Before a request is estimated to consume 90% or more of a known context
+window, Oolong pauses instead of silently truncating the conversation. You can
+send anyway, remove attachments, drop the oldest turn, or cancel while keeping
+the draft. Token and cost totals continue updating during a response, using
+local estimates until provider-reported usage is available.
 
 > **Note:** `shift+enter` requires a terminal with keyboard enhancement support (Kitty, Ghostty, WezTerm, foot, …). `ctrl+j` works everywhere.
 
@@ -208,7 +251,10 @@ The mouse wheel scrolls the conversation too; hold `shift` while dragging to sel
 go test ./...
 ```
 
-The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live in `internal/openai`, `internal/anthropic`, `internal/google`, and `internal/ollama`; `internal/provider` is the shared route resolver and client factory used by both TUI and one-shot modes. Supporting packages handle configuration, keychain access, math formatting, and clipboard image integration.
+The focused release gate and manual platform pass are documented in
+[`docs/release-checklist.md`](docs/release-checklist.md).
+
+The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live under `internal/provider/<name>` alongside the shared route resolver and client factory used by both TUI and one-shot modes. Supporting packages handle configuration, keychain access, math formatting, and clipboard image integration.
 
 Releases are cut automatically on push to `main`: the version bump is derived from [conventional commit](https://www.conventionalcommits.org) messages — `feat:` → minor, `fix:` → patch, a breaking change → major — and commits of other types (`chore:`, `docs:`, `test:`, …) don't trigger a release.
 

@@ -11,8 +11,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/keystore"
-	"github.com/dicedatalore/oolong/internal/openai"
 	"github.com/dicedatalore/oolong/internal/provider"
 )
 
@@ -31,14 +31,20 @@ func Run(ctx context.Context, resolver *provider.Resolver, prompt, stdin string,
 	route := resolver.RouteFor(model)
 	client := resolver.ClientFor(model)
 	if client == nil {
-		keyProvider, _ := provider.KeyProvider(route.Provider)
-		fmt.Fprintf(errOut, "no %s API key: press ctrl+k in the picker or set %s\n", route.Provider, keystore.EnvName(keyProvider))
+		keyProvider, keyed := provider.KeyProvider(route.Provider)
+		if route.Provider == "" {
+			fmt.Fprintf(errOut, "model %q has no provider; set provider in config or pass --provider\n", model)
+		} else if !keyed {
+			fmt.Fprintf(errOut, "provider %q is unavailable\n", route.Provider)
+		} else {
+			fmt.Fprintf(errOut, "no %s API key: press ctrl+k in the picker or set %s\n", route.Provider, keystore.EnvName(keyProvider))
+		}
 		return 1
 	}
 
-	opts := openai.Options{ReasoningEffort: route.Model.ReasoningEffort, Verbosity: route.Model.Verbosity}
-	ch := make(chan openai.StreamEvent)
-	go client.StreamChat(ctx, model, []openai.Message{{Role: "user", Content: content}}, opts, ch)
+	opts := chat.Options{ReasoningEffort: route.Model.ReasoningEffort, Verbosity: route.Model.Verbosity}
+	ch := make(chan chat.StreamEvent)
+	go client.StreamChat(ctx, model, []chat.Message{{Role: "user", Content: content}}, opts, ch)
 
 	trailingNewline := true
 	for ev := range ch {

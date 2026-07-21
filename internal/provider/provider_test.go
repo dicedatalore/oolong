@@ -68,6 +68,16 @@ func TestPerModelKeylessRouteDoesNotCreateGlobalOpenAIAvailability(t *testing.T)
 	}
 }
 
+func TestMissingOrUnknownProviderDoesNotFallBackToOpenAI(t *testing.T) {
+	r := isolatedResolver(config.Config{}, nil, nil)
+	if route := r.RouteFor("uncatalogued-model"); route.Provider != "" {
+		t.Fatalf("missing provider resolved to %q", route.Provider)
+	}
+	if client := NewClient(Route{Provider: Name("future-provider")}, "key"); client != nil {
+		t.Fatalf("unknown provider constructed %T, want nil", client)
+	}
+}
+
 func TestFirstAvailableModelUsesProviderCredentials(t *testing.T) {
 	cfg := config.Config{Models: []config.Model{
 		{ID: "openai", Provider: "openai"},

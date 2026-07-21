@@ -13,6 +13,9 @@ Set Shell "bash"
 Set FontSize 32
 Set Width 2400
 Set Height 1800
+Set Margin 20
+Set MarginFill "#FFAF87"
+Set BorderRadius 10
 
 Type "oolong" Sleep 2s  Enter
 

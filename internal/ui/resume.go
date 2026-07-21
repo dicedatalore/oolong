@@ -1,28 +1,23 @@
 package ui
 
-// Saved transcripts are human-readable Markdown with a versioned, base64
-// encoded JSON metadata block at the top. Resume reads only that block, so
-// arbitrary Markdown, model ids, files, and images round-trip exactly.
+// Saved transcripts are readable Markdown. Resume reconstructs the conversation
+// from its visible title and sections; attachments remain only as their visible
+// text labels.
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/dicedatalore/oolong/internal/openai"
+	"github.com/dicedatalore/oolong/internal/chat"
 )
 
-const (
-	metadataPrefix = "<!-- oolong-transcript:v1\n"
-	metadataSuffix = "\n-->"
-)
+const transcriptTitle = "# Oolong chat — "
 
 type Transcript struct {
-	Model    string           `json:"model"`
-	System   string           `json:"system,omitempty"`
-	Messages []openai.Message `json:"messages"`
+	Model    string
+	System   string
+	Messages []chat.Message
 }
 
 func LoadTranscript(path string) (Transcript, error) {
@@ -37,30 +32,29 @@ func LoadTranscript(path string) (Transcript, error) {
 	return t, nil
 }
 
-func encodeTranscript(t Transcript) (string, error) {
-	data, err := json.Marshal(t)
-	if err != nil {
-		return "", err
-	}
-	return metadataPrefix + base64.RawStdEncoding.EncodeToString(data) + metadataSuffix, nil
-}
-
 func parseTranscript(data string) (Transcript, error) {
-	if !strings.HasPrefix(data, metadataPrefix) {
+	data = strings.ReplaceAll(data, "\r\n", "\n")
+	lines := strings.Split(data, "\n")
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], transcriptTitle) {
 		return Transcript{}, fmt.Errorf("unsupported transcript format")
 	}
-	end := strings.Index(data[len(metadataPrefix):], metadataSuffix)
-	if end < 0 {
-		return Transcript{}, fmt.Errorf("incomplete transcript metadata")
-	}
-	encoded := data[len(metadataPrefix) : len(metadataPrefix)+end]
-	raw, err := base64.RawStdEncoding.DecodeString(encoded)
-	if err != nil {
-		return Transcript{}, fmt.Errorf("invalid transcript metadata: %v", err)
-	}
-	var t Transcript
-	if err := json.Unmarshal(raw, &t); err != nil {
-		return Transcript{}, fmt.Errorf("invalid transcript metadata: %v", err)
+	t := Transcript{Model: strings.TrimSpace(strings.TrimPrefix(lines[0], transcriptTitle))}
+	const marker = "\n---\n\n## "
+	parts := strings.Split("\n"+data, marker)
+	for _, part := range parts[1:] {
+		heading, content, ok := strings.Cut(part, "\n\n")
+		if !ok {
+			return Transcript{}, fmt.Errorf("incomplete transcript section")
+		}
+		content = strings.TrimRight(content, "\n")
+		switch heading {
+		case "System prompt":
+			t.System = content
+		case "You":
+			t.Messages = append(t.Messages, chat.Message{Role: "user", Content: content})
+		default:
+			t.Messages = append(t.Messages, chat.Message{Role: "assistant", Model: heading, Content: content})
+		}
 	}
 	if len(t.Messages) == 0 {
 		return Transcript{}, fmt.Errorf("transcript contains no messages")
