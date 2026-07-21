@@ -11,7 +11,6 @@ type chatKeyMap struct {
 	NewLine          key.Binding
 	Paste            key.Binding
 	Attach           key.Binding
-	Editor           key.Binding
 	Copy             key.Binding
 	CopyCode         key.Binding
 	Regen            key.Binding
@@ -44,7 +43,7 @@ func (k chatKeyMap) ShortHelp() []key.Binding {
 func (k chatKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Send, k.NewLine, k.Paste},
-		{k.Attach, k.Editor, k.Copy},
+		{k.Attach, k.Copy},
 		{k.CopyCode, k.Regen, k.EditLast},
 		{k.RetryModel, k.Recall},
 		{k.RemoveAttachment, k.ClearAttachments},
@@ -61,7 +60,6 @@ func newChatKeyMap() chatKeyMap {
 		NewLine:          key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"), key.WithHelp("shift+enter", "new line")),
 		Paste:            key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("ctrl+v", "paste")),
 		Attach:           key.NewBinding(key.WithKeys("ctrl+f"), key.WithHelp("ctrl+f", "attach file")),
-		Editor:           key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "compose in $EDITOR")),
 		Copy:             key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("ctrl+y", "copy last reply")),
 		CopyCode:         key.NewBinding(key.WithKeys("ctrl+b"), key.WithHelp("ctrl+b", "copy code block")),
 		Regen:            key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "regenerate")),

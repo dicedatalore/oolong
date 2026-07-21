@@ -27,6 +27,7 @@ package ui
 
 import (
 	"context"
+	"os"
 
 	"charm.land/bubbles/v2/filepicker"
 	"charm.land/bubbles/v2/help"
@@ -156,11 +157,12 @@ type Model struct {
 	keyValidating     bool
 	spinnerColorStep  int // position in the primary ↔ secondary fade cycle
 
-	mdStyle    string // glamour style name matching the terminal background
-	resolver   *providerroute.Resolver
-	logo       string
-	sparkleTag int
-	initCmd    tea.Cmd // startup command, returned by Init
+	mdStyle       string // glamour style name matching the terminal background
+	resolver      *providerroute.Resolver
+	logo          string
+	sparkleTag    int
+	initCmd       tea.Cmd // startup command, returned by Init
+	reducedMotion bool
 }
 
 // New builds the initial model. The picker remains available without keys and
@@ -200,7 +202,8 @@ func NewWithResolver(resolver *providerroute.Resolver, mdStyle string, cfg confi
 }
 
 func newModel(resolver *providerroute.Resolver, mdStyle string, cfg config.Config, cfgErr string) Model {
-	theme := newTheme(cfg.Accent, cfg.SecondaryAccent)
+	_, noColor := os.LookupEnv("NO_COLOR")
+	theme := newTheme(cfg.Accent, cfg.SecondaryAccent, noColor)
 	m := Model{
 		theme:             theme,
 		state:             statePicker,
@@ -220,8 +223,9 @@ func newModel(resolver *providerroute.Resolver, mdStyle string, cfg config.Confi
 		transcriptDir:     cfg.TranscriptDir,
 		recallIdx:         -1,
 		editIndex:         -1,
+		reducedMotion:     cfg.ReducedMotion,
 	}
-	m.initCmd = sparkleTick(0)
+	m.initCmd = m.sparkleCmd()
 	if cfg.CustomCatalog() {
 		m.setCatalog(cfg.Catalog())
 	} else {
@@ -322,8 +326,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
-		m.spinnerColorStep++
-		m.spin.Style = m.spin.Style.Foreground(logoColor(spinnerFadePosition(m.spinnerColorStep), m.theme))
+		if !m.reducedMotion && !m.theme.noColor {
+			m.spinnerColorStep++
+			m.spin.Style = m.spin.Style.Foreground(logoColor(spinnerFadePosition(m.spinnerColorStep), m.theme))
+		}
 		return m, cmd
 	}
 
@@ -338,27 +344,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) sparkleCmd() tea.Cmd {
+	if m.reducedMotion {
+		return nil
+	}
+	return sparkleTick(m.sparkleTag)
+}
+
+func (m Model) activityCmd(cmds ...tea.Cmd) tea.Cmd {
+	if !m.reducedMotion {
+		cmds = append([]tea.Cmd{m.spin.Tick}, cmds...)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) activityIndicator() string {
+	if m.reducedMotion {
+		return "•"
+	}
+	return m.spin.View()
+}
+
+// centeredBar gives every screen the same full-width, centered treatment for
+// shortcut help and transient status text. Align applies to each line, so an
+// expanded or wrapped bar remains visually centered too.
+func centeredBar(width int, content string) string {
+	return lipgloss.NewStyle().
+		Width(max(1, width)).
+		Align(lipgloss.Center).
+		Render(content)
+}
+
 // handleResize records the new window size and re-lays-out the widgets.
 // Bubble Tea delivers a WindowSizeMsg at startup, so this also establishes
 // the initial sizes.
 func (m Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
-	m.width = msg.Width
-	m.height = msg.Height
-	m.help.SetWidth(msg.Width - m.theme.page.GetHorizontalFrameSize())
+	m.width = max(1, msg.Width)
+	m.height = max(1, msg.Height)
+	page := m.pageStyle()
+	contentWidth := max(1, m.width-page.GetHorizontalFrameSize())
+	m.help.SetWidth(contentWidth)
 	// Reserve a line for the bottom command bar plus a gap above it,
 	// and room for the logo (with a gap below) when it fits.
-	pickerHeight := msg.Height - m.theme.page.GetVerticalFrameSize() - 2
+	pickerHeight := m.height - page.GetVerticalFrameSize() - 2
 	if logo := m.pickerLogo(); logo != "" {
 		pickerHeight -= lipgloss.Height(logo) + 1
 	}
-	m.picker.SetSize(
-		msg.Width-m.theme.page.GetHorizontalFrameSize(),
-		pickerHeight,
-	)
+	m.picker.SetSize(contentWidth, max(1, pickerHeight))
 	// SetSize stretches the filter input to the list's full width, which
 	// makes the centered block span the whole window while filtering.
 	// Cap it so the filter row stays about as wide as the list items.
-	m.picker.FilterInput.SetWidth(20)
+	m.picker.FilterInput.SetWidth(min(20, max(1, contentWidth-10)))
 	if m.state == stateChat {
 		m.layoutChat()
 	}

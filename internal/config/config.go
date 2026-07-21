@@ -39,6 +39,7 @@ type Config struct {
 	Accent          string  `toml:"accent"`           // primary accent color, "#RRGGBB"
 	SecondaryAccent string  `toml:"secondary_accent"` // secondary accent color, "#RRGGBB"
 	SimplePicker    bool    `toml:"simple_picker"`    // start the model picker in its simple view
+	ReducedMotion   bool    `toml:"reduced_motion"`   // disable decorative animation
 	BaseURL         string  `toml:"base_url"`         // optional provider endpoint for every model
 	Provider        string  `toml:"provider"`         // optional default inherited by models without one
 	Models          []Model `toml:"models"`           // replaces the built-in catalog when present
@@ -120,6 +121,9 @@ const scaffold = `# Oolong configuration — every key is optional; delete what 
 # Start the model picker in its simple view: one line per model, no
 # descriptions or rates. Tab toggles the views either way.
 # simple_picker = true
+
+# Disable the animated picker logo and spinner color cycling.
+# reduced_motion = true
 
 # Any OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter, …). Applies
 # to every model unless one sets its own base_url below. The OPENAI_BASE_URL

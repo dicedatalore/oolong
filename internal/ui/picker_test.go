@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/zalando/go-keyring"
 
 	"github.com/dicedatalore/oolong/internal/config"
@@ -57,6 +58,19 @@ func TestPickerHidesReasoningHelpWithoutModels(t *testing.T) {
 	}
 	if !strings.Contains(help, "key manager") {
 		t.Errorf("empty picker hides key manager help: %q", help)
+	}
+}
+
+func TestPickerSurvivesCompactTerminal(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	var model tea.Model = New(nil, "dark", config.Config{}, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 24, Height: 8})
+	view := model.(Model).viewPicker()
+	if width, height := lipgloss.Width(view), lipgloss.Height(view); width > 24 || height > 8 {
+		t.Errorf("compact picker rendered %dx%d", width, height)
 	}
 }
 

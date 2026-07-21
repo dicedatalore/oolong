@@ -38,6 +38,7 @@ transcript_dir = "~/notes/chats"
 accent = "#FFAF87"
 secondary_accent = "#445566"
 simple_picker = true
+reduced_motion = true
 
 [[models]]
 id = "gpt-5.4"
@@ -52,8 +53,8 @@ verbosity = "low"
 				if c.DefaultModel != "gpt-5.4" || c.TranscriptDir != "~/notes/chats" || c.Accent != "#FFAF87" || c.SecondaryAccent != "#445566" {
 					return "scalar fields not parsed"
 				}
-				if !c.SimplePicker {
-					return "simple_picker not parsed"
+				if !c.SimplePicker || !c.ReducedMotion {
+					return "display preferences not parsed"
 				}
 				if !c.CustomCatalog() || len(c.Catalog()) != 1 {
 					return "custom catalog not used"

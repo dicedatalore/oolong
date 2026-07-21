@@ -28,6 +28,9 @@ func logoColor(t float64, theme theme) color.Color {
 
 // gradientRow styles each cell of s with a left-to-right gradient.
 func gradientRow(s string, theme theme) string {
+	if theme.noColor {
+		return s
+	}
 	runes := []rune(s)
 	var b strings.Builder
 	for i, r := range runes {

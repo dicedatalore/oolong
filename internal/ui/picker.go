@@ -220,12 +220,19 @@ func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 // the simple view packs bare one-line rows.
 func newPickerDelegate(simple bool, theme theme) pickerDelegate {
 	delegate := list.NewDefaultDelegate()
-	delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(lipgloss.Color("252"))
-	delegate.Styles.NormalDesc = delegate.Styles.NormalDesc.Foreground(lipgloss.Color("241"))
-	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
-		Foreground(theme.accent).BorderForeground(theme.accent).Bold(true)
-	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
-		Foreground(lipgloss.Color("245")).BorderForeground(theme.accent)
+	if theme.noColor {
+		delegate.Styles.NormalTitle = lipgloss.NewStyle()
+		delegate.Styles.NormalDesc = lipgloss.NewStyle().Faint(true)
+		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Bold(true)
+		delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.Bold(true)
+	} else {
+		delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(lipgloss.Color("252"))
+		delegate.Styles.NormalDesc = delegate.Styles.NormalDesc.Foreground(lipgloss.Color("241"))
+		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
+			Foreground(theme.accent).BorderForeground(theme.accent).Bold(true)
+		delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
+			Foreground(lipgloss.Color("245")).BorderForeground(theme.accent)
+	}
 	delegate.ShowDescription = !simple
 	delegate.SetSpacing(0)
 	return pickerDelegate{DefaultDelegate: delegate, theme: theme}
@@ -333,7 +340,7 @@ func (m *Model) adjustEffort(delta int) tea.Cmd {
 // pickerLogo returns the banner shown above the model picker, or "" when the
 // window is too narrow for the wordmark to fit without wrapping.
 func (m Model) pickerLogo() string {
-	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
+	contentWidth := m.width - m.pageStyle().GetHorizontalFrameSize()
 	if contentWidth < lipgloss.Width(logoRows[0]) {
 		return ""
 	}
@@ -358,7 +365,7 @@ func (m Model) handleSparkle(msg sparkleMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.logo = renderLogoHeader(m.theme)
-	return m, sparkleTick(msg.tag)
+	return m, m.sparkleCmd()
 }
 
 func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -434,8 +441,9 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 // viewPicker centers the logo and list as one block, with the command bar
 // pinned to the bottom of the window.
 func (m Model) viewPicker() string {
-	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
-	contentHeight := m.height - m.theme.page.GetVerticalFrameSize()
+	page := m.pageStyle()
+	contentWidth := max(1, m.width-page.GetHorizontalFrameSize())
+	contentHeight := max(1, m.height-page.GetVerticalFrameSize())
 
 	// The list pads itself to its set height; trim that so the block
 	// centers on its actual content.
@@ -461,26 +469,36 @@ func (m Model) viewPicker() string {
 	// The list bubble implements the help KeyMap interface itself, so the
 	// help widget can render the picker's keys directly.
 	bottomBar := m.help.View(m.picker)
+	if contentWidth < 40 || contentHeight < 12 {
+		bottomBar = m.theme.help.Render("ctrl+k keys • esc quit")
+	}
 	if m.retryModel {
 		bottomBar = m.theme.notice.Render("choose a model to retry the last response • esc cancels") + "\n\n" + bottomBar
 	}
-	if m.keyNotice != "" {
+	compactSetupNotice := (contentWidth < 40 || contentHeight < 12) && len(m.catalog) == 0 &&
+		strings.HasPrefix(m.keyNotice, "no API keys configured")
+	if m.keyNotice != "" && !compactSetupNotice {
 		bottomBar = m.theme.notice.Render(m.keyNotice) + "\n\n" + bottomBar
 	}
+	bottomBar = centeredBar(contentWidth, bottomBar)
 	bottomBarHeight := lipgloss.Height(bottomBar)
 
-	centered := lipgloss.Place(contentWidth, contentHeight-bottomBarHeight,
+	centered := lipgloss.Place(contentWidth, max(1, contentHeight-bottomBarHeight),
 		lipgloss.Center, lipgloss.Center, view)
-	return m.theme.page.Render(centered + "\n" +
-		lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, bottomBar))
+	return page.Render(centered + "\n" + bottomBar)
 }
 
 // firstRunView replaces the list's generic empty state with a short setup path.
 // It only appears when there are no selectable models, so configured users keep
 // the compact picker they expect.
 func (m Model) firstRunView(contentWidth int) string {
-	width := min(58, max(24, contentWidth-4))
+	width := max(1, min(58, contentWidth-4))
 	title := m.theme.userLabel.Render("Welcome to Oolong")
+	if contentWidth < 40 || m.height < 14 {
+		return lipgloss.NewStyle().Width(width).Render(
+			title + "\n\n" + m.theme.notice.Render("ctrl+k") + " add an API key\n" +
+				m.theme.help.Render("Run `oolong config init` for local models."))
+	}
 	intro := "Choose how you want to connect:"
 	actions := strings.Join([]string{
 		m.theme.notice.Render("ctrl+k") + "  Add an OpenAI, Anthropic, or Google API key",

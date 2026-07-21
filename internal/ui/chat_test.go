@@ -391,64 +391,6 @@ func TestEscMidStreamCountsEstimatedUsage(t *testing.T) {
 	}
 }
 
-func TestEditorRequiresEditorEnv(t *testing.T) {
-	t.Setenv("VISUAL", "")
-	t.Setenv("EDITOR", "")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer srv.Close()
-
-	model := enterChat(t, srv)
-	model, cmd := model.Update(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
-	if cmd != nil {
-		t.Error("ctrl+e without $EDITOR returned a command")
-	}
-	if got := model.(Model).chatNotice; !strings.Contains(got, "$EDITOR") {
-		t.Errorf("chatNotice = %q, want a $EDITOR hint", got)
-	}
-}
-
-func TestEditorRoundTrip(t *testing.T) {
-	t.Setenv("VISUAL", "")
-	t.Setenv("EDITOR", "true") // exits 0 without touching the file
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer srv.Close()
-
-	model := enterChat(t, srv)
-	model = typeText(model, "draft")
-	model, cmd := model.Update(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
-	if cmd == nil {
-		t.Fatal("ctrl+e with $EDITOR set returned no command")
-	}
-
-	// Stand in for the editor: overwrite the temp file, then deliver the
-	// finished message the ExecProcess callback would produce.
-	f, err := os.CreateTemp(t.TempDir(), "edited-*.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString("composed in editor\n"); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-	model, _ = model.Update(editorFinishedMsg{path: f.Name()})
-	if got := model.(Model).input.Value(); got != "composed in editor" {
-		t.Errorf("composer after editor = %q, want %q", got, "composed in editor")
-	}
-	if _, err := os.Stat(f.Name()); !os.IsNotExist(err) {
-		t.Error("temp file not cleaned up after the editor round trip")
-	}
-
-	// A failed editor leaves the composer alone.
-	model, _ = model.Update(editorFinishedMsg{path: "does-not-exist", err: fmt.Errorf("exit 1")})
-	am := model.(Model)
-	if am.input.Value() != "composed in editor" {
-		t.Errorf("failed editor changed the composer: %q", am.input.Value())
-	}
-	if !strings.Contains(am.errText, "exit 1") {
-		t.Errorf("errText = %q, want the editor error", am.errText)
-	}
-}
-
 func TestCopyWithNothingToCopy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()
@@ -493,6 +435,23 @@ func TestChatViewFillsWindow(t *testing.T) {
 	am.layoutChat()
 	if h := lipgloss.Height(am.viewChat()); h != 24 {
 		t.Errorf("seeded chat view height = %d, want 24", h)
+	}
+}
+
+func TestChatLayoutSurvivesCompactTerminalSizes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	model := seedConversation(enterChat(t, srv))
+	for _, size := range []tea.WindowSizeMsg{{Width: 60, Height: 18}, {Width: 40, Height: 12}, {Width: 24, Height: 8}} {
+		model, _ = model.Update(size)
+		am := model.(Model)
+		if am.vp.Width() < 1 || am.vp.Height() < 1 || am.input.Width() < 1 {
+			t.Errorf("%dx%d produced invalid widget size: viewport=%dx%d input=%d", size.Width, size.Height, am.vp.Width(), am.vp.Height(), am.input.Width())
+		}
+		view := am.viewChat()
+		if lipgloss.Width(view) > size.Width || lipgloss.Height(view) > size.Height {
+			t.Errorf("%dx%d chat rendered %dx%d", size.Width, size.Height, lipgloss.Width(view), lipgloss.Height(view))
+		}
 	}
 }
 
@@ -604,6 +563,21 @@ func TestMessageSpacingGroupsPromptWithReply(t *testing.T) {
 	}
 	if !strings.HasSuffix(assistant, "\n\n\n") {
 		t.Error("assistant reply does not separate completed exchanges")
+	}
+}
+
+func TestIncompleteCodeFenceStaysPlainWhileStreaming(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	am := enterChat(t, srv).(Model)
+	content := "before\n```go\nfmt.Println(\"hi\")"
+	plain := am.renderMessageMode(chat.Message{Role: "assistant", Content: content}, true)
+	if !strings.Contains(plain, "```go") {
+		t.Errorf("unfinished streaming fence was reformatted: %q", plain)
+	}
+	closed := am.renderMessageMode(chat.Message{Role: "assistant", Content: content + "\n```"}, true)
+	if strings.Contains(closed, "```go") {
+		t.Errorf("closed streaming fence was not rendered as Markdown: %q", closed)
 	}
 }
 

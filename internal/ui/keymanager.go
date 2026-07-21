@@ -94,7 +94,7 @@ func (m Model) closeKeyManager() (tea.Model, tea.Cmd) {
 	// The previous picker visit's tick stopped scheduling in this screen. Use
 	// a new tag so a delayed tick cannot revive that old animation loop.
 	m.sparkleTag++
-	return m, sparkleTick(m.sparkleTag)
+	return m, m.sparkleCmd()
 }
 
 func (m Model) activeKeyInput() textinput.Model {
@@ -137,7 +137,7 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.keyErr = ""
 			m.keyValidating = true
 			provider := m.keyProvider
-			return m, tea.Batch(m.spin.Tick, func() tea.Msg {
+			return m, m.activityCmd(func() tea.Msg {
 				return keyCheckMsg{provider: provider, key: keyValue,
 					err: m.resolver.ValidateKey(providerroute.Name(provider), keyValue)}
 			})
@@ -187,11 +187,26 @@ func providerName(provider keystore.Provider) string {
 func (m Model) keyProviderTabs() string {
 	tabs := make([]string, 0, len(keyProviders))
 	for _, provider := range keyProviders {
+		label := providerName(provider)
+		if m.width < 34 {
+			switch provider {
+			case keystore.OpenAI:
+				label = "OA"
+			case keystore.Anthropic:
+				label = "A"
+			case keystore.Google:
+				label = "G"
+			}
+		}
 		style := lipgloss.NewStyle().Padding(0, 1).Foreground(m.theme.accentDim)
 		if provider == m.keyProvider {
-			style = style.Foreground(lipgloss.Color("235")).Background(m.theme.accent).Bold(true)
+			if m.theme.noColor {
+				style = lipgloss.NewStyle().Padding(0, 1).Reverse(true).Bold(true)
+			} else {
+				style = style.Foreground(lipgloss.Color("235")).Background(m.theme.accent).Bold(true)
+			}
 		}
-		tabs = append(tabs, style.Render(providerName(provider)))
+		tabs = append(tabs, style.Render(label))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 }
@@ -212,43 +227,61 @@ func (m Model) keyCard() string {
 	input := *m.keyInput(provider)
 	// Width applies to the card's content; leave room for its padding, border,
 	// and the surrounding page frame.
-	width := min(56, max(20, m.width-m.theme.page.GetHorizontalFrameSize()-6))
-	input.SetWidth(width - 4)
+	available := max(1, m.width-m.pageStyle().GetHorizontalFrameSize())
+	width := max(1, min(56, available-6))
+	input.SetWidth(max(1, width-4))
 
 	description := "Paste a new key below. It will be validated before it is saved."
+	if available < 42 || m.height < 14 {
+		description = "Enter a key to verify and save."
+	}
 	if m.keyStatuses[provider] == "environment" {
 		description = "The environment value takes priority. Saving a key here will keep it as a fallback."
 	} else if m.keyStatuses[provider] == "keychain" {
 		description = "Enter a new key to replace the one saved on this device."
 	}
 	body := m.keyStatus(provider) + "\n\n" + m.theme.help.Render(description) + "\n\n" + input.View()
-	return lipgloss.NewStyle().
+	if m.height < 12 {
+		body = m.keyStatus(provider) + "\n" + input.View()
+	}
+	card := lipgloss.NewStyle().
 		Width(width).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.accentDim).
-		Padding(1, 2).
-		Render(body)
+		BorderForeground(m.theme.accentDim)
+	if available >= 30 && m.height >= 12 {
+		card = card.Padding(1, 2)
+	} else {
+		card = card.Padding(0, 1)
+	}
+	return card.Render(body)
 }
 
 func (m Model) viewKeyManager() string {
-	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
-	contentHeight := m.height - m.theme.page.GetVerticalFrameSize()
+	page := m.pageStyle()
+	contentWidth := max(1, m.width-page.GetHorizontalFrameSize())
+	contentHeight := max(1, m.height-page.GetVerticalFrameSize())
 
 	header := m.theme.headerBar.Render(m.theme.header.Render("API keys"))
 	content := header + "\n" + m.keyProviderTabs() + "\n\n" + m.keyCard()
+	if m.height < 12 {
+		content = m.keyProviderTabs() + "\n" + m.keyCard()
+	}
 	// Keep every line aligned to the widest part of the manager when the
 	// whole block is centered; otherwise Place centers each line separately.
 	content = lipgloss.NewStyle().Width(lipgloss.Width(content)).Render(content)
 
 	bottom := m.theme.help.Render("←/→ or tab: provider • enter: verify & save • ctrl+d: remove saved key • esc: back")
+	if m.width < 50 || m.height < 12 {
+		bottom = m.theme.help.Render("tab provider • enter save • esc back")
+	}
 	if m.keyValidating {
-		bottom = m.spin.View() + m.theme.help.Render("validating "+providerName(m.keyProvider)+" key…")
+		bottom = m.activityIndicator() + m.theme.help.Render("validating "+providerName(m.keyProvider)+" key…")
 	} else if m.keyErr != "" {
 		bottom = m.theme.err.Render(m.keyErr)
 	}
+	bottom = centeredBar(contentWidth, bottom)
 
-	centered := lipgloss.Place(contentWidth, contentHeight-lipgloss.Height(bottom),
+	centered := lipgloss.Place(contentWidth, max(1, contentHeight-lipgloss.Height(bottom)),
 		lipgloss.Center, lipgloss.Center, content)
-	return m.theme.page.Render(centered + "\n" +
-		lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, bottom))
+	return page.Render(centered + "\n" + bottom)
 }

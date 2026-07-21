@@ -87,6 +87,7 @@ transcript_dir = "~/notes/chats"  # OOLONG_TRANSCRIPT_DIR still wins
 accent = "#FFAF87"                # primary accent color
 secondary_accent = "#7D56F4"      # assistant messages and logo gradient
 simple_picker = true              # start the picker in its simple view (tab toggles)
+reduced_motion = true             # disable decorative animation
 
 # OpenAI client — uses the official Responses API when base_url is omitted.
 [[models]]
@@ -187,7 +188,6 @@ ever loaded implicitly — resume only reads a file you name.
 | `shift+enter` / `ctrl+j` | Insert newline |
 | `ctrl+v` | Paste (a clipboard image becomes an attachment) |
 | `ctrl+f` | Attach an image or text file from disk |
-| `ctrl+e` | Compose the message in `$EDITOR` |
 | `ctrl+y` | Copy the last reply to the clipboard |
 | `ctrl+b` | Copy the last reply's last code block |
 | `ctrl+r` | Regenerate the last reply |
@@ -207,6 +207,12 @@ ever loaded implicitly — resume only reads a file you name.
 | `?` | Toggle full help |
 
 On the model picker, `←`/`→` adjust the selected model's reasoning effort before the chat starts, `tab` toggles between the full view (descriptions, rates, provider headings) and a simple one-line-per-model view, and `esc` clears an active filter before it quits. Set `simple_picker = true` in the config to start in the simple view.
+
+Oolong progressively simplifies its header, help, onboarding, and key manager
+in narrow or short terminal panes. Set `NO_COLOR=1` to remove color while
+retaining bold, borders, and other non-color focus cues. Set
+`reduced_motion = true` to disable decorative animation and use a static
+activity indicator.
 
 The mouse wheel scrolls the conversation too; hold `shift` while dragging to select text, as usual in TUIs.
 

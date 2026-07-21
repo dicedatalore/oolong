@@ -167,6 +167,19 @@ func TestKeyManagerCardFitsNarrowTerminal(t *testing.T) {
 	}
 }
 
+func TestKeyManagerSurvivesCompactTerminal(t *testing.T) {
+	model := newKeyManagerModel(t)
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 24, Height: 10})
+	am := model.(Model)
+	if width := lipgloss.Width(am.keyCard()); width > 24 {
+		t.Errorf("compact key card width = %d", width)
+	}
+	view := am.viewKeyManager()
+	if width, height := lipgloss.Width(view), lipgloss.Height(view); width > 24 || height > 10 {
+		t.Errorf("compact key manager rendered %dx%d", width, height)
+	}
+}
+
 func TestKeyManagerCardBordersAlign(t *testing.T) {
 	model := newKeyManagerModel(t)
 	lines := strings.Split(model.(Model).keyCard(), "\n")
@@ -204,6 +217,12 @@ func TestKeyManagerContentIsCenteredWithHelpAtBottom(t *testing.T) {
 	}
 	if helpLine <= cardLine || len(lines)-helpLine > 3 {
 		t.Errorf("help line %d is not pinned below the card near the bottom of %d lines", helpLine, len(lines))
+	}
+	help := lines[helpLine]
+	helpLead := len(help) - len(strings.TrimLeft(help, " "))
+	helpTrail := len(help) - len(strings.TrimRight(help, " "))
+	if diff := helpLead - helpTrail; diff < -1 || diff > 1 {
+		t.Errorf("help is not centered: %d leading vs %d trailing spaces", helpLead, helpTrail)
 	}
 }
 

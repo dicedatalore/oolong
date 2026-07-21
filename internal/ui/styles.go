@@ -17,9 +17,10 @@ type theme struct {
 	userLabel, botLabel, userBlock, botBlock               lipgloss.Style
 	help, notice, err                                      lipgloss.Style
 	logoFrom, logoTo                                       [3]int
+	noColor                                                bool
 }
 
-func newTheme(accent, secondaryAccent string) theme {
+func newTheme(accent, secondaryAccent string, noColor bool) theme {
 	if accent == "" {
 		accent = "#FFAF87"
 	}
@@ -42,7 +43,7 @@ func newTheme(accent, secondaryAccent string) theme {
 	}
 	sr, sg, sb := int(sv>>16&0xFF), int(sv>>8&0xFF), int(sv&0xFF)
 	secondary := lipgloss.Color(secondaryAccent)
-	return theme{
+	t := theme{
 		accent:    primary,
 		accentDim: primaryDim,
 		page:      lipgloss.NewStyle().Padding(1, 1),
@@ -50,7 +51,7 @@ func newTheme(accent, secondaryAccent string) theme {
 		header:    lipgloss.NewStyle().Foreground(lipgloss.Color("235")).Background(primary).Padding(0, 1),
 		inputRow:  lipgloss.NewStyle(),
 		composer:  lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true, false, false, false).BorderForeground(lipgloss.Color("238")),
-		bottomBar: lipgloss.NewStyle().Padding(1, 0, 0, 2),
+		bottomBar: lipgloss.NewStyle().PaddingTop(1),
 		userLabel: lipgloss.NewStyle().Bold(true).Foreground(primary),
 		botLabel:  lipgloss.NewStyle().Bold(true).Foreground(secondary),
 		userBlock: lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(primary).PaddingLeft(1),
@@ -60,5 +61,31 @@ func newTheme(accent, secondaryAccent string) theme {
 		err:       lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")),
 		logoFrom:  [3]int{r, g, b},
 		logoTo:    [3]int{sr, sg, sb},
+		noColor:   noColor,
 	}
+	if noColor {
+		t.accent = lipgloss.NoColor{}
+		t.accentDim = lipgloss.NoColor{}
+		t.header = lipgloss.NewStyle().Reverse(true).Padding(0, 1)
+		t.composer = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true, false, false, false)
+		t.userLabel = lipgloss.NewStyle().Bold(true)
+		t.botLabel = lipgloss.NewStyle().Bold(true)
+		t.userBlock = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).PaddingLeft(1)
+		t.botBlock = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).PaddingLeft(1)
+		t.help = lipgloss.NewStyle().Faint(true)
+		t.notice = lipgloss.NewStyle().Bold(true)
+		t.err = lipgloss.NewStyle().Bold(true)
+	}
+	return t
+}
+
+func (m Model) pageStyle() lipgloss.Style {
+	page := m.theme.page
+	if m.height < 10 {
+		page = page.PaddingTop(0).PaddingBottom(0)
+	}
+	if m.width < 20 {
+		page = page.PaddingLeft(0).PaddingRight(0)
+	}
+	return page
 }
