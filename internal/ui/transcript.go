@@ -32,39 +32,39 @@ func (m Model) saveTranscript() (string, error) {
 	return name, os.WriteFile(name, []byte(m.transcriptMarkdown()), 0o644)
 }
 
-// transcriptMarkdown renders a versioned metadata block followed by a
-// human-readable Markdown copy of the conversation. Resume reads the metadata;
-// headings and labels are presentation only.
+// transcriptMarkdown renders the conversation as readable Markdown. Resume
+// parses these same visible sections; no hidden metadata or attachment data is
+// written to the file.
 func (m Model) transcriptMarkdown() string {
 	var b strings.Builder
-	metadata, err := encodeTranscript(Transcript{Model: m.chosen, System: m.systemPrompt, Messages: m.messages})
-	if err != nil {
-		return ""
-	}
-	b.WriteString(metadata + "\n\n")
 	fmt.Fprintf(&b, "# Oolong chat — %s\n\n_%s_\n\n", m.chosen, time.Now().Format("2006-01-02 15:04"))
 	if m.systemPrompt != "" {
-		fmt.Fprintf(&b, "**System prompt:** %s\n\n", m.systemPrompt)
+		writeTranscriptSection(&b, "System prompt", m.systemPrompt)
 	}
 	for _, msg := range m.messages {
 		if msg.Role == "user" {
-			b.WriteString("## You\n\n")
+			var content strings.Builder
 			if n := len(msg.Images); n > 0 {
-				fmt.Fprintf(&b, "_%s_\n\n", imageLabel(n))
+				fmt.Fprintf(&content, "_%s_\n\n", imageLabel(n))
 			}
 			for _, f := range msg.Files {
-				fmt.Fprintf(&b, "_📄 %s_\n\n", f.Name)
+				fmt.Fprintf(&content, "_📄 %s_\n\n", f.Name)
 			}
 			if msg.Content != "" {
-				fmt.Fprintf(&b, "%s\n\n", msg.Content)
+				content.WriteString(msg.Content)
 			}
+			writeTranscriptSection(&b, "You", strings.TrimSpace(content.String()))
 			continue
 		}
 		model := msg.Model
 		if model == "" {
 			model = m.chosen
 		}
-		fmt.Fprintf(&b, "## %s\n\n%s\n\n", model, msg.Content)
+		writeTranscriptSection(&b, model, msg.Content)
 	}
 	return b.String()
+}
+
+func writeTranscriptSection(b *strings.Builder, heading, content string) {
+	fmt.Fprintf(b, "---\n\n## %s\n\n%s\n\n", heading, content)
 }

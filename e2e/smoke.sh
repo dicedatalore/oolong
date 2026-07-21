@@ -97,7 +97,11 @@ if [ -z "$TRANSCRIPT" ]; then
     echo "FAIL(transcript): no file saved to $OOLONG_TRANSCRIPT_DIR"
     FAILED=1
 else
-    assert_contains "$TRANSCRIPT" transcript "<!-- oolong-transcript:v1" "hello from e2e"
+    assert_contains "$TRANSCRIPT" transcript "# Oolong chat — gpt-5.6-luna" "## You" "hello from e2e"
+    if grep -qF -- "<!--" "$TRANSCRIPT"; then
+        echo "FAIL(transcript): contains hidden metadata"
+        FAILED=1
+    fi
 fi
 
 echo "== one-shot pipe mode"

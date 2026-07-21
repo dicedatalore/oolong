@@ -42,6 +42,9 @@ func TestSaveTranscript(t *testing.T) {
 			t.Errorf("transcript missing %q:\n%s", want, md)
 		}
 	}
+	if strings.Contains(md, "<!--") {
+		t.Errorf("transcript contains hidden metadata:\n%s", md)
+	}
 }
 
 func TestSaveTranscriptHonorsDirEnv(t *testing.T) {

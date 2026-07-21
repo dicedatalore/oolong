@@ -39,8 +39,16 @@ func TestTranscriptRoundTrip(t *testing.T) {
 	if len(got.Messages) != 3 {
 		t.Fatalf("len(Messages) = %d, want 3", len(got.Messages))
 	}
-	if !reflect.DeepEqual(got.Messages, am.messages) {
-		t.Errorf("messages did not round trip:\n got: %#v\nwant: %#v", got.Messages, am.messages)
+	if !reflect.DeepEqual(got.Messages[:2], am.messages[:2]) {
+		t.Errorf("text messages did not round trip:\n got: %#v\nwant: %#v", got.Messages[:2], am.messages[:2])
+	}
+	if got.Messages[2].Role != "user" || got.Messages[2].Images != nil || got.Messages[2].Files != nil {
+		t.Errorf("attachments were restored instead of visible text: %#v", got.Messages[2])
+	}
+	for _, want := range []string{"📎 1 image", "📄 a.txt", "thanks"} {
+		if !strings.Contains(got.Messages[2].Content, want) {
+			t.Errorf("resumed attachment text missing %q: %q", want, got.Messages[2].Content)
+		}
 	}
 }
 

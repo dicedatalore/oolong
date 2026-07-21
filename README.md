@@ -168,11 +168,11 @@ Transcripts saved with `ctrl+s` can be picked back up later:
 oolong --resume oolong-chat-2026-07-19-094035.md
 ```
 
-The conversation, system prompt, model, and attachments are restored from a
-versioned metadata block in the Markdown file. Nothing is ever loaded
-implicitly — resume only reads a file you name. Because saved transcripts are
-lossless, their metadata contains the contents of attached files and images;
-treat transcript files as private data.
+Transcript files contain only the readable Markdown shown when you open them;
+there is no hidden metadata. Resume reconstructs the conversation, system
+prompt, and model from that text. Attachment names and image counts resume as
+text labels, but the original attachment contents are not saved. Nothing is
+ever loaded implicitly — resume only reads a file you name.
 
 ## Keybindings
 
