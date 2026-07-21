@@ -12,6 +12,7 @@ import (
 	"github.com/dicedatalore/oolong/internal/chat"
 	"github.com/dicedatalore/oolong/internal/provider/anthropic"
 	"github.com/dicedatalore/oolong/internal/provider/google"
+	"github.com/dicedatalore/oolong/internal/provider/ollama"
 )
 
 func TestGeminiFakeMatchesSDK(t *testing.T) {
@@ -52,6 +53,53 @@ func TestGeminiFakeMatchesSDK(t *testing.T) {
 	}
 	if !strings.Contains(string(logged), "hello fake") {
 		t.Errorf("request log = %s", logged)
+	}
+}
+
+func TestOllamaFakeMatchesClient(t *testing.T) {
+	t.Setenv("REPLY_FILE", "")
+	t.Setenv("REPLY_DELAY_MS", "0")
+	logPath := t.TempDir() + "/ollama.log"
+	t.Setenv("OLLAMA_REQLOG", logPath)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat", ollamaChat)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	stream := make(chan chat.StreamEvent)
+	go ollama.New(server.URL).StreamChat(context.Background(), "gemma3",
+		[]chat.Message{{Role: "user", Content: "hello local"}}, chat.Options{}, stream)
+	var text string
+	var usage chat.Usage
+	for event := range stream {
+		if event.Err != nil {
+			t.Fatal(event.Err)
+		}
+		text += event.Delta
+		if event.Done {
+			usage = event.Usage
+		}
+	}
+	if text != "fake reply done" || usage.InputTokens != 10 || usage.OutputTokens != 30 {
+		t.Errorf("reply = %q, usage = %+v", text, usage)
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logged), `"model":"gemma3"`) || !strings.Contains(string(logged), "hello local") {
+		t.Errorf("request log = %s", logged)
+	}
+}
+
+func TestFakeRejectsKnownBadKey(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request.Header.Set("x-api-key", "bad-key")
+	recorder := httptest.NewRecorder()
+	models(recorder, request)
+	if recorder.Code != http.StatusUnauthorized || !strings.Contains(recorder.Body.String(), "invalid API key") {
+		t.Errorf("response = %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 

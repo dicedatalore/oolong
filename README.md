@@ -140,6 +140,21 @@ For a single run, `oolong --model <id>` opens a chat directly with a configured 
 
 `reasoning_effort` sets the provider's effort parameter; `verbosity` applies only to OpenAI's Responses API. Values are passed through because support varies by model generation. On the model picker, `←`/`→` adjust effort for the session. A malformed config never blocks launch — Oolong falls back to defaults and shows what it ignored.
 
+### Provider differences
+
+| Provider | API | Credentials | Notable behavior |
+| --- | --- | --- | --- |
+| OpenAI | Responses API | `OPENAI_API_KEY` or keychain | Server-side response storage is disabled. `verbosity` is supported when the selected model accepts it. |
+| Anthropic | Messages API | `ANTHROPIC_API_KEY` or keychain | Uses Anthropic-native system prompts, images, streaming, effort, and usage fields. |
+| Google | Gemini API | `GEMINI_API_KEY` or keychain | Uses Gemini-native content parts, streaming, thinking level, and usage metadata. |
+| Ollama | Native `/api/chat` | None | Requires a reachable local/configured server. Rates are unknown unless supplied in config. |
+
+Images and text-file attachments are translated into each provider's native
+request shape. Model support for images, reasoning effort, and very large
+inputs still varies; unsupported-feature errors remain available through
+`ctrl+i`. OpenAI-compatible endpoints use the OpenAI client but may differ
+from OpenAI in authentication, models, usage reporting, and optional fields.
+
 ### Custom OpenAI endpoints
 
 Use `provider = "openai"` with a custom `base_url` for a service that implements OpenAI's Responses API, such as LM Studio or OpenRouter:
@@ -235,6 +250,9 @@ local estimates until provider-reported usage is available.
 ```sh
 go test ./...
 ```
+
+The focused release gate and manual platform pass are documented in
+[`docs/release-checklist.md`](docs/release-checklist.md).
 
 The UI is a Bubble Tea state machine with three screens — model picker, chat, and provider key manager — under `internal/ui`. Provider clients live under `internal/provider/<name>` alongside the shared route resolver and client factory used by both TUI and one-shot modes. Supporting packages handle configuration, keychain access, math formatting, and clipboard image integration.
 

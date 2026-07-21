@@ -48,6 +48,12 @@ export ANTHROPIC_API_KEY=sk-ant-test
 export OPENAI_BASE_URL="http://$ADDR/v1"
 export XDG_CONFIG_HOME="$TMP/xdg"
 export OOLONG_TRANSCRIPT_DIR="$TMP"
+# Demo colors must not depend on the shell or CI environment that launched
+# the recorder. VHS provides a color-capable terminal, so advertise it and
+# explicitly clear the accessibility override used for no-color sessions.
+unset NO_COLOR
+export TERM=xterm-256color
+export COLORTERM=truecolor
 
 # Keep the demo catalog compact while showing provider-aware routing. The
 # tape selects Claude, whose native Messages API is served by fakeapi.
