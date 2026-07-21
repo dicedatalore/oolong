@@ -168,6 +168,9 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 		m.vp.SetContent(m.conversationView())
 		if atBottom {
 			m.vp.GotoBottom()
+			m.newOutputBelow = false
+		} else {
+			m.newOutputBelow = true
 		}
 		return m, readStream(m.stream)
 	}

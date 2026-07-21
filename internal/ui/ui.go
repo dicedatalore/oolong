@@ -78,6 +78,7 @@ type Model struct {
 	picker       list.Model
 	simplePicker bool   // compact one-line rows; tab toggles, simple_picker seeds
 	chosen       string // id of the picked model, e.g. "gpt-5.6-terra"
+	retryModel   bool   // picker is choosing a model to retry the last request
 
 	// chat
 	input    textarea.Model // message composer
@@ -89,10 +90,11 @@ type Model struct {
 	messages []chat.Message
 	// msgCache[i] is messages[i] rendered at cacheWidth. Completed messages
 	// render once; only the streaming message re-renders per delta.
-	msgCache   []string
-	cacheWidth int
-	waiting    bool // a request is in flight
-	errText    string
+	msgCache       []string
+	cacheWidth     int
+	waiting        bool // a request is in flight
+	errText        string
+	newOutputBelow bool // streamed output arrived while the viewport was scrolled up
 
 	// in-flight response stream (see stream.go)
 	stream        <-chan chat.StreamEvent
@@ -111,6 +113,13 @@ type Model struct {
 	recallText        string      // the text recallIdx was recalled as, to detect edits
 	recallSavedImages [][]byte    // pendingImages stashed when recall started
 	recallSavedFiles  []chat.File // pendingFiles stashed when recall started
+
+	// ctrl+u edits the latest user turn in place. The existing conversation is
+	// left untouched until the edited prompt is sent, so esc can cancel safely.
+	editIndex       int
+	editSavedText   string
+	editSavedImages [][]byte
+	editSavedFiles  []chat.File
 
 	// system prompt editing (ctrl+p repurposes the chat input)
 	systemPrompt  string
@@ -204,6 +213,7 @@ func newModel(resolver *providerroute.Resolver, mdStyle string, cfg config.Confi
 		logo:              renderLogoHeader(theme),
 		transcriptDir:     cfg.TranscriptDir,
 		recallIdx:         -1,
+		editIndex:         -1,
 	}
 	m.initCmd = sparkleTick(0)
 	if cfg.CustomCatalog() {

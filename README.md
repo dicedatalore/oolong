@@ -190,7 +190,11 @@ ever loaded implicitly — resume only reads a file you name.
 | `ctrl+y` | Copy the last reply to the clipboard |
 | `ctrl+b` | Copy the last reply's last code block |
 | `ctrl+r` | Regenerate the last reply |
+| `ctrl+u` | Edit the latest user message and regenerate from it |
+| `ctrl+t` | Retry the last request with another model |
 | `↑` / `↓` | Cycle through your sent messages, attachments included (when the composer is empty) |
+| `ctrl+↑` / `ctrl+↓` | Jump between conversation turns |
+| `ctrl+d` / `alt+d` | Remove the last pending attachment / clear all pending attachments |
 | `ctrl+n` | Start a new chat |
 | `ctrl+p` | Edit the system prompt |
 | `ctrl+s` | Save transcript to markdown |

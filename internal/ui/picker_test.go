@@ -68,7 +68,7 @@ func TestEmptyPickerGuidesFirstRun(t *testing.T) {
 	var model tea.Model = New(nil, "dark", config.Config{}, "")
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 90, Height: 30})
 	view := ansi.ReplaceAllString(model.(Model).viewPicker(), "")
-	for _, want := range []string{"Welcome to Oolong", "ctrl+k", "oolong config init", "oolong doctor", "OS keychain", "Environment variables", "take priority"} {
+	for _, want := range []string{"Welcome to Oolong", "ctrl+k", "oolong config init", "oolong doctor", "OS keychain", "environment variables win"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("first-run view missing %q:\n%s", want, view)
 		}

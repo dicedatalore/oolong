@@ -365,6 +365,14 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok && m.picker.FilterState() != list.Filtering {
 		switch key.String() {
 		case "esc":
+			if m.retryModel {
+				m.retryModel = false
+				m.state = stateChat
+				m.keyNotice = ""
+				m.chatNotice = "model retry cancelled"
+				m.layoutChat()
+				return m, m.input.Focus()
+			}
 			// With a filter applied, esc backs out of the filter first;
 			// only an unfiltered picker quits. (While the filter is being
 			// typed, esc never reaches here — the list cancels it.)
@@ -410,6 +418,9 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.keyNotice = "no API key for this provider — ctrl+k opens the key manager"
 				return m, nil
 			}
+			if m.retryModel {
+				return m.retryLastWithModel(item.id)
+			}
 			return m.openChat(item.id)
 		}
 	}
@@ -450,6 +461,9 @@ func (m Model) viewPicker() string {
 	// The list bubble implements the help KeyMap interface itself, so the
 	// help widget can render the picker's keys directly.
 	bottomBar := m.help.View(m.picker)
+	if m.retryModel {
+		bottomBar = m.theme.notice.Render("choose a model to retry the last response • esc cancels") + "\n\n" + bottomBar
+	}
 	if m.keyNotice != "" {
 		bottomBar = m.theme.notice.Render(m.keyNotice) + "\n\n" + bottomBar
 	}
@@ -473,7 +487,7 @@ func (m Model) firstRunView(contentWidth int) string {
 		m.theme.notice.Render("config") + "  Run `oolong config init` for Ollama or another endpoint",
 		m.theme.notice.Render("doctor") + "  Run `oolong doctor` to check this setup",
 	}, "\n")
-	privacy := m.theme.help.Render("Keys are stored in your OS keychain.")
+	privacy := m.theme.help.Render("Keys stay in your OS keychain; environment variables win.")
 	return lipgloss.NewStyle().Width(width).Render(title + "\n\n" + intro + "\n\n" + actions + "\n\n" + privacy)
 }
 

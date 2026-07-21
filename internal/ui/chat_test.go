@@ -670,7 +670,7 @@ func TestAttachPath(t *testing.T) {
 
 	// Both attachments ride along on the next send, and the indicator line
 	// names them.
-	if label := am.attachmentLabel(); !strings.Contains(label, "1 image") || !strings.Contains(label, "main.go") {
+	if label := am.attachmentLabel(); !strings.Contains(label, "image 1") || !strings.Contains(label, "main.go") {
 		t.Errorf("attachmentLabel = %q, want image count and file name", label)
 	}
 	var model tea.Model = am
@@ -685,6 +685,144 @@ func TestAttachPath(t *testing.T) {
 		t.Error("pending attachments not cleared after send")
 	}
 	am.finishStream() // cancel the in-flight stream so its goroutine exits
+}
+
+func TestEditLastPromptRegeneratesAndRestoresDraft(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := seedConversation(enterChat(t, srv))
+	am := model.(Model)
+	am.input.SetValue("unsent draft")
+	am.pendingFiles = []chat.File{{Name: "draft.txt", Text: "draft attachment"}}
+	model = am
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	am = model.(Model)
+	if am.editIndex != 0 || am.input.Value() != "hello" {
+		t.Fatalf("edit state index=%d input=%q", am.editIndex, am.input.Value())
+	}
+	model = typeText(model, " edited")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	am = model.(Model)
+	if len(am.messages) != 1 || am.messages[0].Content != "hello edited" || !am.waiting {
+		t.Errorf("edited conversation = %#v, waiting=%v", am.messages, am.waiting)
+	}
+	if am.input.Value() != "unsent draft" || len(am.pendingFiles) != 1 || am.pendingFiles[0].Name != "draft.txt" {
+		t.Errorf("draft not restored: input=%q files=%#v", am.input.Value(), am.pendingFiles)
+	}
+	am.finishStream()
+}
+
+func TestEditLastPromptCanBeCancelled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := seedConversation(enterChat(t, srv))
+	am := model.(Model)
+	am.input.SetValue("draft")
+	model = am
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	am = model.(Model)
+	if am.state != stateChat || am.editIndex >= 0 || am.input.Value() != "draft" || len(am.messages) != 2 {
+		t.Errorf("cancel edit state=%v index=%d input=%q messages=%d", am.state, am.editIndex, am.input.Value(), len(am.messages))
+	}
+}
+
+func TestRetryLastResponseWithAnotherModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	cfg := config.Config{Provider: "openai", Models: []config.Model{{ID: "small"}, {ID: "large"}}}
+	var model tea.Model = New(clientFor(srv), "dark", cfg, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	am := model.(Model)
+	am.messages = []chat.Message{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "old", Model: "small"}}
+	am.input.SetValue("draft")
+	am.layoutChat()
+	model = am
+
+	model, _ = model.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	am = model.(Model)
+	if am.state != statePicker || !am.retryModel {
+		t.Fatalf("retry picker state=%v retry=%v", am.state, am.retryModel)
+	}
+	am.selectModel("large")
+	model = am
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	am = model.(Model)
+	if am.state != stateChat || am.chosen != "large" || !am.waiting || len(am.messages) != 1 {
+		t.Errorf("retry result state=%v model=%q waiting=%v messages=%#v", am.state, am.chosen, am.waiting, am.messages)
+	}
+	if am.input.Value() != "draft" {
+		t.Errorf("retry lost draft: %q", am.input.Value())
+	}
+	am.finishStream()
+}
+
+func TestPendingAttachmentsCanBeRemovedAndCleared(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	am := enterChat(t, srv).(Model)
+	am.pendingImages = [][]byte{{1}, {2}}
+	am.pendingFiles = []chat.File{{Name: "one.txt"}, {Name: "two.txt"}}
+	am.layoutChat()
+	if view := am.chatComposer(60); !strings.Contains(view, "image 1") || !strings.Contains(view, "image 2") || !strings.Contains(view, "one.txt") || !strings.Contains(view, "two.txt") {
+		t.Errorf("composer does not list attachments individually: %q", view)
+	}
+	var model tea.Model = am
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	am = model.(Model)
+	if len(am.pendingFiles) != 1 || am.pendingFiles[0].Name != "one.txt" {
+		t.Errorf("remove-last left files %#v", am.pendingFiles)
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModAlt})
+	am = model.(Model)
+	if len(am.pendingImages) != 0 || len(am.pendingFiles) != 0 {
+		t.Errorf("clear-all left %d images and %d files", len(am.pendingImages), len(am.pendingFiles))
+	}
+}
+
+func TestTurnNavigationAndNewOutputIndicator(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	am := enterChat(t, srv).(Model)
+	for i := range 8 {
+		am.messages = append(am.messages,
+			chat.Message{Role: "user", Content: fmt.Sprintf("question %d\n%s", i, strings.Repeat("line\n", 4))},
+			chat.Message{Role: "assistant", Content: fmt.Sprintf("answer %d\n%s", i, strings.Repeat("reply\n", 4))})
+	}
+	am.layoutChat()
+	am.vp.GotoTop()
+	start := am.vp.YOffset()
+	var model tea.Model = am
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
+	am = model.(Model)
+	if am.vp.YOffset() <= start {
+		t.Error("ctrl+down did not jump to the next turn")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	am = model.(Model)
+	if am.vp.YOffset() != start {
+		t.Errorf("ctrl+up offset=%d, want %d", am.vp.YOffset(), start)
+	}
+
+	am.vp.GotoTop()
+	am.waiting = true
+	am.streaming = false
+	ch := make(chan chat.StreamEvent)
+	am.stream = ch
+	model, _ = am.handleStreamEvent(streamEventMsg{StreamEvent: chat.StreamEvent{Delta: "new"}, ch: ch})
+	am = model.(Model)
+	if !am.newOutputBelow || !strings.Contains(am.viewChat(), "new output below") {
+		t.Error("streaming while scrolled up did not show the new-output indicator")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	am = model.(Model)
+	if am.newOutputBelow {
+		t.Error("end did not clear the new-output indicator")
+	}
+	am.finishStream()
 }
 
 func TestContextMeterInHeader(t *testing.T) {
