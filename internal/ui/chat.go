@@ -263,6 +263,7 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.state = statePicker
+			m.help.ShowAll = false
 			m.input.Blur()
 			if len(m.messages) > 0 {
 				m.keyNotice = "chat kept — pick a model to continue, ctrl+n starts fresh"
@@ -358,6 +359,7 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.retryModel = true
 			m.state = statePicker
+			m.help.ShowAll = false
 			m.input.Blur()
 			m.keyNotice = ""
 			m.sparkleTag++
@@ -933,25 +935,18 @@ func (m Model) chatHeader() string {
 			usd += float64(ein)/1e6*r.input + float64(eout)/1e6*r.output
 		}
 	}
-	source := "usage"
-	if in > 0 || out > 0 {
-		source = "reported"
-	}
-	if m.waiting || m.usageEstimated {
-		source = "estimated"
-	}
 	contentWidth := max(1, m.width-m.pageStyle().GetHorizontalFrameSize()-m.theme.headerBar.GetHorizontalFrameSize())
 	model := m.chosen
 	if contentWidth < 34 {
 		model = xansi.Truncate(model, max(1, contentWidth-2), "…")
 		return m.theme.headerBar.Render(m.theme.header.Render(model))
 	}
-	metadata := fmt.Sprintf("%s • $%.4f • %s in / %s out",
-		source, usd, formatTokens(in), formatTokens(out))
+	metadata := fmt.Sprintf("$%.4f • %s in / %s out",
+		usd, formatTokens(in), formatTokens(out))
 	if contentWidth < 64 {
-		metadata = fmt.Sprintf("%s • %s/%s tokens", shortUsageSource(source), formatTokens(in), formatTokens(out))
+		metadata = fmt.Sprintf("%s/%s tokens", formatTokens(in), formatTokens(out))
 	} else if contentWidth < 90 {
-		metadata = fmt.Sprintf("%s • %s in / %s out", source, formatTokens(in), formatTokens(out))
+		metadata = fmt.Sprintf("%s in / %s out", formatTokens(in), formatTokens(out))
 		if eff := m.modelConfig(m.chosen).ReasoningEffort; eff != "" {
 			metadata += " • effort: " + eff
 		}
@@ -978,20 +973,11 @@ func (m Model) chatHeader() string {
 	return m.theme.headerBar.Render(xansi.Truncate(header, contentWidth, "…"))
 }
 
-func shortUsageSource(source string) string {
-	if source == "estimated" {
-		return "est."
-	}
-	if source == "reported" {
-		return "report."
-	}
-	return "usage"
-}
-
 // chatComposer renders attachment/editing context and the textarea inside a
 // subtle top boundary, keeping input distinct from the transcript.
 func (m Model) chatComposer(contentWidth int) string {
-	inputArea := m.theme.inputRow.Render(m.input.View())
+	input := m.composerInput()
+	inputArea := m.theme.inputRow.Render(input.View())
 	if m.editingSystem {
 		inputArea = m.theme.inputRow.Render(m.theme.botLabel.Render("System prompt")) +
 			"\n" + inputArea
@@ -1005,6 +991,35 @@ func (m Model) chatComposer(contentWidth int) string {
 		inputArea = m.theme.inputRow.Render(strings.Join(attachments, "\n")) + "\n" + inputArea
 	}
 	return m.theme.composer.Width(contentWidth).Render(inputArea)
+}
+
+func (m Model) composerInput() textarea.Model {
+	input := m.input
+	if placeholder := m.responsePlaceholder(); placeholder != "" {
+		input.Placeholder = placeholder
+		// Keep the colored spinner out of Placeholder: textarea slices and
+		// wraps placeholder cells, which corrupts embedded ANSI styling. Its
+		// prompt is rendered separately and safely preserves the fade colors.
+		input.Prompt = m.activityIndicator() + " "
+		input.SetWidth(input.Width())
+		input.Blur()
+	}
+	return input
+}
+
+func (m Model) responsePlaceholder() string {
+	if !m.waiting {
+		return ""
+	}
+	label := "thinking…"
+	if m.streaming {
+		label = "streaming…"
+	}
+	placeholder := label
+	if m.newOutputBelow {
+		placeholder += " • new output below — end to follow"
+	}
+	return placeholder
 }
 
 // viewChat stacks the header, conversation viewport, input area, and bottom
@@ -1029,7 +1044,8 @@ func (m Model) viewChat() string {
 
 func (m Model) chatBottomBar() string {
 	// The bottom bar shows one thing at a time, in order of urgency:
-	// error > spinner > notice > picker/system prompt hints > key help.
+	// error > notice > picker/system prompt hints > key help. Response
+	// activity lives in the header so shortcuts remain available while waiting.
 	bottomBar := m.help.View(m.keys)
 	if m.editingSystem {
 		bottomBar = m.theme.help.Render("enter save • esc cancel • empty prompt clears")
@@ -1045,16 +1061,7 @@ func (m Model) chatBottomBar() string {
 		bottomBar = m.theme.err.Render(fmt.Sprintf("estimated context %d%% full", pct)) +
 			m.theme.help.Render(" — s send anyway • d drop oldest • a remove attachments • esc cancel")
 	}
-	if m.waiting {
-		label := " thinking…"
-		if m.streaming {
-			label = " streaming…"
-		}
-		bottomBar = m.activityIndicator() + m.theme.help.Render(label)
-		if m.newOutputBelow {
-			bottomBar += m.theme.notice.Render(" • new output below — end to follow")
-		}
-	} else if m.newOutputBelow {
+	if !m.waiting && m.newOutputBelow {
 		bottomBar = m.theme.notice.Render("new output below — end to jump to latest")
 	}
 	if m.errorInfo != nil {

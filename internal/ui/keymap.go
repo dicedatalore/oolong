@@ -25,8 +25,7 @@ type chatKeyMap struct {
 	Jump             key.Binding
 	SysPrompt        key.Binding
 	Save             key.Binding
-	Stop             key.Binding
-	Back             key.Binding
+	Escape           key.Binding
 	Quit             key.Binding
 	Help             key.Binding
 }
@@ -37,20 +36,17 @@ type chatKeyMap struct {
 // ShortHelp keeps the most used keys visible; everything else lives in the
 // full help behind "?".
 func (k chatKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Send, k.NewLine, k.Back, k.Help}
+	return []key.Binding{k.Send, k.NewLine, k.Escape, k.Help}
 }
 
 func (k chatKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Send, k.NewLine, k.Paste},
-		{k.Attach, k.Copy},
-		{k.CopyCode, k.Regen, k.EditLast},
-		{k.RetryModel, k.Recall},
-		{k.RemoveAttachment, k.ClearAttachments},
-		{k.ErrorDetails},
-		{k.SysPrompt, k.Save, k.NewChat},
-		{k.Scroll, k.Jump, k.Stop},
-		{k.Back, k.Quit, k.Help},
+		// Compose and manage attachments.
+		{k.Send, k.NewLine, k.Paste, k.Attach, k.RemoveAttachment, k.ClearAttachments},
+		// Continue and work with the conversation.
+		{k.Recall, k.EditLast, k.Regen, k.RetryModel, k.Copy, k.CopyCode, k.ErrorDetails},
+		// Navigate and manage the session.
+		{k.Scroll, k.Jump, k.SysPrompt, k.Save, k.NewChat, k.Escape, k.Quit, k.Help},
 	}
 }
 
@@ -60,22 +56,21 @@ func newChatKeyMap() chatKeyMap {
 		NewLine:          key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"), key.WithHelp("shift+enter", "new line")),
 		Paste:            key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("ctrl+v", "paste")),
 		Attach:           key.NewBinding(key.WithKeys("ctrl+f"), key.WithHelp("ctrl+f", "attach file")),
-		Copy:             key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("ctrl+y", "copy last reply")),
-		CopyCode:         key.NewBinding(key.WithKeys("ctrl+b"), key.WithHelp("ctrl+b", "copy code block")),
+		Copy:             key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("ctrl+y", "copy reply")),
+		CopyCode:         key.NewBinding(key.WithKeys("ctrl+b"), key.WithHelp("ctrl+b", "copy code")),
 		Regen:            key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "regenerate")),
-		EditLast:         key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "edit last prompt")),
-		RetryModel:       key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("ctrl+t", "retry with model")),
-		Recall:           key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "message history")),
-		RemoveAttachment: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "remove attachment")),
-		ClearAttachments: key.NewBinding(key.WithKeys("alt+d"), key.WithHelp("alt+d", "clear attachments")),
+		EditLast:         key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "edit prompt")),
+		RetryModel:       key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("ctrl+t", "retry model")),
+		Recall:           key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "history")),
+		RemoveAttachment: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "remove file")),
+		ClearAttachments: key.NewBinding(key.WithKeys("alt+d"), key.WithHelp("alt+d", "clear files")),
 		ErrorDetails:     key.NewBinding(key.WithKeys("ctrl+i"), key.WithHelp("ctrl+i", "error details")),
 		NewChat:          key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "new chat")),
 		Scroll:           key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "scroll")),
 		Jump:             key.NewBinding(key.WithKeys("home", "end"), key.WithHelp("home/end", "top/bottom")),
 		SysPrompt:        key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("ctrl+p", "system prompt")),
 		Save:             key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save chat")),
-		Stop:             key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "stop response")),
-		Back:             key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "change model")),
+		Escape:           key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "stop / models")),
 		Quit:             key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
 		Help:             key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "more")),
 	}

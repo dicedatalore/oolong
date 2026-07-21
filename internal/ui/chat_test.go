@@ -955,3 +955,94 @@ func TestHelpToggle(t *testing.T) {
 		t.Errorf("input = %q, want %q", am.input.Value(), "what?")
 	}
 }
+
+func TestExpandedChatHelpDoesNotLeakIntoPicker(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	model, _ = model.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	am := model.(Model)
+	if am.state != statePicker {
+		t.Fatalf("state after esc = %v, want picker", am.state)
+	}
+	if am.help.ShowAll {
+		t.Fatal("expanded chat help leaked into picker")
+	}
+	if help := ansi.ReplaceAllString(am.help.View(am.picker), ""); strings.Contains(help, "\n") {
+		t.Errorf("picker help rendered as columns:\n%s", help)
+	}
+}
+
+func TestExpandedHelpShowsConsolidatedGroupsAndNavigation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	am := enterChat(t, srv).(Model)
+	am.help.ShowAll = true
+	help := ansi.ReplaceAllString(am.help.View(am.keys), "")
+	compactHelp := strings.Join(strings.Fields(help), " ")
+	for _, want := range []string{
+		"enter send",
+		"ctrl+f attach file",
+		"↑/↓ history",
+		"ctrl+r regenerate",
+		"pgup/pgdn scroll",
+		"home/end top/bottom",
+		"ctrl+s save chat",
+		"esc stop / models",
+	} {
+		if !strings.Contains(compactHelp, want) {
+			t.Errorf("expanded help missing %q:\n%s", want, help)
+		}
+	}
+	if strings.Count(compactHelp, "esc stop / models") != 1 {
+		t.Errorf("escape action is not consolidated:\n%s", help)
+	}
+}
+
+func TestResponseActivityUsesComposerAndLeavesHelpVisible(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	model := enterChat(t, srv)
+	for _, tt := range []struct {
+		name      string
+		streaming bool
+		want      string
+	}{
+		{name: "thinking", want: "thinking…"},
+		{name: "streaming", streaming: true, want: "streaming…"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			am := model.(Model)
+			am.waiting = true
+			am.streaming = tt.streaming
+			if tt.streaming {
+				am.messages = append(am.messages, chat.Message{Role: "assistant"})
+			}
+			input := am.composerInput()
+			if strings.Contains(input.Placeholder, "\x1b") {
+				t.Errorf("response placeholder contains ANSI escapes: %q", input.Placeholder)
+			}
+			if input.Prompt != am.activityIndicator()+" " {
+				t.Errorf("composer prompt lost styled spinner: %q", input.Prompt)
+			}
+			if input.Focused() {
+				t.Error("composer cursor remains active during response activity")
+			}
+			composer := ansi.ReplaceAllString(am.chatComposer(78), "")
+			if !strings.Contains(composer, tt.want) {
+				t.Errorf("composer missing %q activity: %q", tt.want, composer)
+			}
+			if header := ansi.ReplaceAllString(am.chatHeader(), ""); strings.Contains(header, tt.want) {
+				t.Errorf("header still contains response activity: %q", header)
+			}
+			bottom := ansi.ReplaceAllString(am.chatBottomBar(), "")
+			if !strings.Contains(bottom, "enter send") || strings.Contains(bottom, tt.want) {
+				t.Errorf("response activity replaced shortcut help: %q", bottom)
+			}
+		})
+	}
+}

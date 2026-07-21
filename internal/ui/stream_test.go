@@ -130,7 +130,7 @@ func TestStreamErrorShowsMessage(t *testing.T) {
 	}
 }
 
-func TestUsageSourceDistinguishesReportedAndEstimated(t *testing.T) {
+func TestUsageAccountingKeepsReportedAndEstimatedValuesWithoutLabels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":7,\"output_tokens\":2}}}\n\n")
@@ -140,8 +140,8 @@ func TestUsageSourceDistinguishesReportedAndEstimated(t *testing.T) {
 	model = typeText(model, "hello")
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = pumpStream(t, model)
-	if header := model.(Model).chatHeader(); !strings.Contains(header, "reported") {
-		t.Errorf("reported usage header = %q", header)
+	if header := model.(Model).chatHeader(); !strings.Contains(header, "7 in / 2 out") || strings.Contains(header, "reported") {
+		t.Errorf("provider usage header = %q", header)
 	}
 
 	am := model.(Model)
@@ -153,7 +153,8 @@ func TestUsageSourceDistinguishesReportedAndEstimated(t *testing.T) {
 	am.stream = ch
 	model, _ = am.handleStreamEvent(streamEventMsg{StreamEvent: chat.StreamEvent{Done: true}, ch: ch})
 	am = model.(Model)
-	if !am.usageEstimated || !strings.Contains(am.chatHeader(), "estimated") {
-		t.Errorf("estimated usage not labelled: estimated=%v header=%q", am.usageEstimated, am.chatHeader())
+	header := am.chatHeader()
+	if !am.usageEstimated || strings.Contains(header, "estimated") || strings.Contains(header, "reported") {
+		t.Errorf("estimated usage state or header is wrong: estimated=%v header=%q", am.usageEstimated, header)
 	}
 }

@@ -47,6 +47,7 @@ func (m *Model) keyInput(provider keystore.Provider) *textinput.Model {
 
 func (m *Model) openKeyManager() tea.Cmd {
 	m.state = stateKeyManager
+	m.help.ShowAll = false
 	m.keyProvider = keystore.OpenAI
 	m.keyErr = ""
 	for _, provider := range keyProviders {

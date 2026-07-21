@@ -219,8 +219,8 @@ The mouse wheel scrolls the conversation too; hold `shift` while dragging to sel
 Before a request is estimated to consume 90% or more of a known context
 window, Oolong pauses instead of silently truncating the conversation. You can
 send anyway, remove attachments, drop the oldest turn, or cancel while keeping
-the draft. The header labels token and cost figures as `reported` when they came
-from the provider and `estimated` when any part was calculated locally.
+the draft. Token and cost totals continue updating during a response, using
+local estimates until provider-reported usage is available.
 
 > **Note:** `shift+enter` requires a terminal with keyboard enhancement support (Kitty, Ghostty, WezTerm, foot, …). `ctrl+j` works everywhere.
 
