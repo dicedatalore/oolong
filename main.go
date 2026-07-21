@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/muesli/termenv"
 
+	"github.com/dicedatalore/oolong/internal/clipboard"
 	"github.com/dicedatalore/oolong/internal/config"
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/oneshot"
@@ -28,17 +29,20 @@ func main() {
 		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
 		getenv: os.Getenv, loadConfig: config.Load, initConfig: config.Init,
 		deleteKeys: keystore.DeleteAll, resolveKey: keystore.Resolve,
+		keyStatus: keystore.Status, clipboardSupported: clipboard.Supported,
 	}))
 }
 
 type dependencies struct {
-	stdin          *os.File
-	stdout, stderr io.Writer
-	getenv         func(string) string
-	loadConfig     func() (config.Config, error)
-	initConfig     func() (string, error)
-	deleteKeys     func() error
-	resolveKey     func(keystore.Provider) string
+	stdin              *os.File
+	stdout, stderr     io.Writer
+	getenv             func(string) string
+	loadConfig         func() (config.Config, error)
+	initConfig         func() (string, error)
+	deleteKeys         func() error
+	resolveKey         func(keystore.Provider) string
+	keyStatus          func(keystore.Provider) string
+	clipboardSupported func() bool
 }
 
 // run is the convenient test entry point; runWith contains the fully injected
@@ -48,6 +52,7 @@ func run(argv []string, stdout, stderr io.Writer) int {
 		stdin: os.Stdin, stdout: stdout, stderr: stderr,
 		getenv: os.Getenv, loadConfig: config.Load, initConfig: config.Init,
 		deleteKeys: keystore.DeleteAll, resolveKey: keystore.Resolve,
+		keyStatus: keystore.Status, clipboardSupported: clipboard.Supported,
 	})
 }
 
@@ -65,6 +70,7 @@ func runWith(argv []string, deps dependencies) int {
   oolong "prompt"          one-shot: stream the answer to stdout, no TUI
   ... | oolong ["prompt"]  send piped input as context (one-shot)
   oolong config init       write a commented starter config.toml
+  oolong doctor            inspect local setup without contacting providers
 
 Flags:
 `)
@@ -130,6 +136,9 @@ Flags:
 	var cfgNotice string
 	if cfgErr != nil {
 		cfgNotice = cfgErr.Error()
+	}
+	if len(args) == 1 && args[0] == "doctor" {
+		return runDoctor(deps.stdout, cfg, cfgErr, resolver, deps.keyStatus, deps.clipboardSupported)
 	}
 
 	// Positional arguments (or piped stdin) mean one-shot mode: stream the

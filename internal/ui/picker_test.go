@@ -60,6 +60,21 @@ func TestPickerHidesReasoningHelpWithoutModels(t *testing.T) {
 	}
 }
 
+func TestEmptyPickerGuidesFirstRun(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	var model tea.Model = New(nil, "dark", config.Config{}, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 90, Height: 30})
+	view := ansi.ReplaceAllString(model.(Model).viewPicker(), "")
+	for _, want := range []string{"Welcome to Oolong", "ctrl+k", "oolong config init", "oolong doctor", "OS keychain", "Environment variables", "take priority"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("first-run view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestPickerNoticeUsesAccentAndBlankSeparator(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("OPENAI_API_KEY", "")

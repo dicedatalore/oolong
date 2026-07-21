@@ -118,7 +118,7 @@ func (m Model) updateKeyManager(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.selectKeyProvider(m.stepKeyProvider(-1))
 		case "ctrl+d":
 			if err := keystore.Delete(m.keyProvider); err != nil {
-				m.keyErr = "couldn't delete key from OS keychain"
+				m.keyErr = "couldn't delete key — check that the OS keychain is available and unlocked"
 			} else if keystore.Status(m.keyProvider) == "environment" {
 				m.keyNotice = fmt.Sprintf("%s key still supplied by environment", providerName(m.keyProvider))
 			} else {
@@ -156,21 +156,22 @@ func (m Model) handleKeyCheck(msg keyCheckMsg) (tea.Model, tea.Cmd) {
 	}
 	m.keyValidating = false
 	if msg.err != nil {
-		m.keyErr = msg.err.Error()
+		m.keyErr = fmt.Sprintf("%s key wasn't accepted — check it and try again: %v",
+			providerName(msg.provider), msg.err)
 		return m, nil
 	}
 	if err := keystore.Set(msg.provider, msg.key); err != nil {
-		m.keyErr = "couldn't save key to OS keychain"
+		m.keyErr = "couldn't save key — check that the OS keychain is available and unlocked"
 		return m, nil
 	}
 	m.keyInput(msg.provider).SetValue("")
 	m.clients = nil
 	m.refreshKeyStatuses()
 	m.refreshBuiltinCatalog()
-	m.keyNotice = fmt.Sprintf("%s key saved to OS keychain", providerName(msg.provider))
+	m.keyNotice = fmt.Sprintf("%s connected — choose a model to start chatting", providerName(msg.provider))
 	m.keyErr = ""
 
-	return m, nil
+	return m.closeKeyManager()
 }
 
 func providerName(provider keystore.Provider) string {

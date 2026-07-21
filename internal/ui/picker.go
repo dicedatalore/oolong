@@ -429,6 +429,9 @@ func (m Model) viewPicker() string {
 	// The list pads itself to its set height; trim that so the block
 	// centers on its actual content.
 	view := strings.TrimRight(m.picker.View(), " \n")
+	if len(m.catalog) == 0 {
+		view = m.firstRunView(contentWidth)
+	}
 	if logo := m.pickerLogo(); logo != "" {
 		if m.simplePicker {
 			view = centerPickerBlock(view, lipgloss.Width(logo))
@@ -456,6 +459,22 @@ func (m Model) viewPicker() string {
 		lipgloss.Center, lipgloss.Center, view)
 	return m.theme.page.Render(centered + "\n" +
 		lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, bottomBar))
+}
+
+// firstRunView replaces the list's generic empty state with a short setup path.
+// It only appears when there are no selectable models, so configured users keep
+// the compact picker they expect.
+func (m Model) firstRunView(contentWidth int) string {
+	width := min(58, max(24, contentWidth-4))
+	title := m.theme.userLabel.Render("Welcome to Oolong")
+	intro := "Choose how you want to connect:"
+	actions := strings.Join([]string{
+		m.theme.notice.Render("ctrl+k") + "  Add an OpenAI, Anthropic, or Google API key",
+		m.theme.notice.Render("config") + "  Run `oolong config init` for Ollama or another endpoint",
+		m.theme.notice.Render("doctor") + "  Run `oolong doctor` to check this setup",
+	}, "\n")
+	privacy := m.theme.help.Render("Keys are stored in your OS keychain.")
+	return lipgloss.NewStyle().Width(width).Render(title + "\n\n" + intro + "\n\n" + actions + "\n\n" + privacy)
 }
 
 // centerPickerBlock centers a multiline list as one aligned block. Using

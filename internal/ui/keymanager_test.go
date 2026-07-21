@@ -251,7 +251,7 @@ func TestOpenAIValidationFailureStaysInManager(t *testing.T) {
 	}
 	model, _ = model.Update(keyCheckMsg{provider: keystore.OpenAI, key: "sk-bad", err: errors.New("invalid API key")})
 	am := model.(Model)
-	if am.state != stateKeyManager || am.keyErr != "invalid API key" {
+	if am.state != stateKeyManager || !strings.Contains(am.keyErr, "invalid API key") || !strings.Contains(am.keyErr, "try again") {
 		t.Errorf("state=%v error=%q", am.state, am.keyErr)
 	}
 }
@@ -269,8 +269,11 @@ func TestAnthropicKeySavedOnlyToKeychainAndInputCleared(t *testing.T) {
 	if err != nil || got != "sk-ant-test" {
 		t.Fatalf("keychain value = %q, %v", got, err)
 	}
-	if am.state != stateKeyManager {
-		t.Error("saving a key unexpectedly closed the manager")
+	if am.state != statePicker {
+		t.Error("saving a key did not return to the model picker")
+	}
+	if !strings.Contains(am.keyNotice, "choose a model") {
+		t.Errorf("success notice = %q, want a next step", am.keyNotice)
 	}
 }
 

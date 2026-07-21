@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dicedatalore/oolong/internal/config"
+	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/provider"
 	"github.com/dicedatalore/oolong/internal/version"
 )
@@ -45,6 +46,55 @@ func TestRunEarlyCommands(t *testing.T) {
 				t.Errorf("stderr = %q, want to contain %q", stderr.String(), tt.wantStderr)
 			}
 		})
+	}
+}
+
+func TestRunDoctorReportsSetupWithoutSecrets(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg := config.Config{Models: []config.Model{{ID: "local", Provider: "ollama", BaseURL: "http://localhost:11434"}}}
+	var stdout, stderr strings.Builder
+	code := runWith([]string{"doctor"}, dependencies{
+		stdout:     &stdout,
+		stderr:     &stderr,
+		getenv:     func(string) string { return "" },
+		loadConfig: func() (config.Config, error) { return cfg, nil },
+		resolveKey: func(keystore.Provider) string { return "" },
+		keyStatus: func(provider keystore.Provider) string {
+			if provider == keystore.OpenAI {
+				return "environment"
+			}
+			return "not set"
+		},
+		clipboardSupported: func() bool { return false },
+	})
+	if code != 0 {
+		t.Fatalf("doctor exit = %d; stderr: %s", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{"Config status: OK", "OpenAI", "environment", "Ollama", "available locally", "image support unavailable", "No provider network requests were made"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("doctor output missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "sk-secret") {
+		t.Error("doctor printed a secret")
+	}
+}
+
+func TestRunDoctorReturnsFailureForConfigWarning(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var stdout, stderr strings.Builder
+	code := runWith([]string{"doctor"}, dependencies{
+		stdout:             &stdout,
+		stderr:             &stderr,
+		getenv:             func(string) string { return "" },
+		loadConfig:         func() (config.Config, error) { return config.Config{}, errors.New("config: ignored bad value") },
+		resolveKey:         func(keystore.Provider) string { return "" },
+		keyStatus:          func(keystore.Provider) string { return "not set" },
+		clipboardSupported: func() bool { return true },
+	})
+	if code != 1 || !strings.Contains(stdout.String(), "Config warning: config: ignored bad value") {
+		t.Fatalf("doctor exit = %d, output = %q", code, stdout.String())
 	}
 }
 

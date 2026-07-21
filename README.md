@@ -68,6 +68,10 @@ Prefer a standalone binary? Prebuilt archives for macOS, Linux, and Windows are 
 2. Press `ctrl+k` to open the key manager. It accepts OpenAI, Anthropic, and Google keys and stores them only in your OS keychain. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY` take precedence when set.
 3. Pick a model and start chatting.
 
+If setup is not behaving as expected, `oolong doctor` reports the config path,
+credential sources, configured providers, and clipboard capabilities without
+printing secrets or contacting a provider.
+
 To add, replace, or remove a provider key, press `ctrl+k` on the model picker. `oolong --reset-key` removes all stored provider keys.
 
 ## Configuration
