@@ -77,12 +77,61 @@ func estimateTokens(chars int) int {
 func (m Model) transcriptChars() int {
 	chars := len(m.systemPrompt)
 	for _, msg := range m.messages {
-		chars += len(msg.Content)
-		for _, f := range msg.Files {
-			chars += len(f.Text)
-		}
+		chars += messageChars(msg)
 	}
 	return chars
+}
+
+func messageChars(msg chat.Message) int {
+	chars := len(msg.Content) + len(msg.Images)*4000 // conservative image-token allowance
+	for _, f := range msg.Files {
+		chars += len(f.Text)
+	}
+	return chars
+}
+
+func (m Model) contextWarningFor(pending chat.Message) (int, bool) {
+	window := m.modelConfig(m.chosen).ContextWindow
+	if window <= 0 {
+		return 0, false
+	}
+	chars := len(m.systemPrompt) + messageChars(pending)
+	history := m.messages
+	if m.editIndex >= 0 {
+		history = history[:m.editIndex]
+	}
+	for _, msg := range history {
+		chars += messageChars(msg)
+	}
+	pct := 100 * estimateTokens(chars) / window
+	// Reserve roughly 10% for the response and token-estimation error.
+	return pct, pct >= 90
+}
+
+func (m Model) resendContextWarning() (int, bool) {
+	window := m.modelConfig(m.chosen).ContextWindow
+	if window <= 0 {
+		return 0, false
+	}
+	chars := len(m.systemPrompt)
+	history := m.messages
+	if len(history) > 0 && history[len(history)-1].Role == "assistant" {
+		history = history[:len(history)-1]
+	}
+	for _, msg := range history {
+		chars += messageChars(msg)
+	}
+	pct := 100 * estimateTokens(chars) / window
+	return pct, pct >= 90
+}
+
+func (m Model) contextWarningPercent() int {
+	if m.contextResend {
+		pct, _ := m.resendContextWarning()
+		return pct
+	}
+	pct, _ := m.contextWarningFor(m.contextPending)
+	return pct
 }
 
 // contextUsed estimates how much of the model's context window the
@@ -114,6 +163,9 @@ func (m Model) streamEstimate() (in, out int) {
 // incurred cost, but its usage report will never arrive.
 func (m *Model) settleStreamEstimate() {
 	in, out := m.streamEstimate()
+	if in > 0 || out > 0 {
+		m.usageEstimated = true
+	}
 	m.inputTokens += in
 	m.outputTokens += out
 	if r, ok := m.rates[m.chosen]; ok {
@@ -144,16 +196,26 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case msg.Err != nil:
+		m.settleStreamEstimate()
 		m.finishStream()
-		m.errText = msg.Err.Error()
+		m.errorInfo = classifyChatError(msg.Err)
+		m.errText = m.errorInfo.summary
+		m.showErrorDetail = false
+		m.layoutChat()
 		return m, nil
 	case msg.Done:
+		estIn, estOut := m.streamEstimate()
 		m.finishStream()
-		m.inputTokens += msg.Usage.InputTokens
-		m.outputTokens += msg.Usage.OutputTokens
+		usage := msg.Usage
+		if usage.InputTokens == 0 && usage.OutputTokens == 0 {
+			usage = chat.Usage{InputTokens: estIn, OutputTokens: estOut}
+			m.usageEstimated = true
+		}
+		m.inputTokens += usage.InputTokens
+		m.outputTokens += usage.OutputTokens
 		if r, ok := m.rates[m.chosen]; ok {
-			m.costUSD += float64(msg.Usage.InputTokens)/1e6*r.input +
-				float64(msg.Usage.OutputTokens)/1e6*r.output
+			m.costUSD += float64(usage.InputTokens)/1e6*r.input +
+				float64(usage.OutputTokens)/1e6*r.output
 		}
 		return m, nil
 	default:

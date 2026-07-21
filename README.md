@@ -22,6 +22,7 @@
 - **Native provider support** — OpenAI, Anthropic, Google, and Ollama clients stream text, images, files, system prompts, effort, and usage through their respective APIs
 - **Custom OpenAI endpoints** — use the OpenAI client with a custom `base_url` for services such as LM Studio and OpenRouter, globally or per model
 - **Context meter** — the chat header tracks how much of the model's context window the conversation fills, and warns as it nears the limit
+- **Recoverable failures** — common provider errors are translated into a short explanation and next step, with `ctrl+i` retaining access to the original technical detail
 - **System prompt editing** in place (`ctrl+p`), without losing your message draft
 - **Transcript export & resume** — `ctrl+s` saves the conversation as a timestamped markdown file; `oolong --resume <file>` picks it back up later
 - **Configurable** — an optional TOML config file sets a custom model catalog, a default model, reasoning effort and verbosity, endpoints, transcript directory, and accent color
@@ -192,8 +193,9 @@ ever loaded implicitly — resume only reads a file you name.
 | `ctrl+r` | Regenerate the last reply |
 | `ctrl+u` | Edit the latest user message and regenerate from it |
 | `ctrl+t` | Retry the last request with another model |
+| `ctrl+k` | Open the provider key manager from an error |
+| `ctrl+i` | Show or hide technical error details |
 | `↑` / `↓` | Cycle through your sent messages, attachments included (when the composer is empty) |
-| `ctrl+↑` / `ctrl+↓` | Jump between conversation turns |
 | `ctrl+d` / `alt+d` | Remove the last pending attachment / clear all pending attachments |
 | `ctrl+n` | Start a new chat |
 | `ctrl+p` | Edit the system prompt |
@@ -207,6 +209,12 @@ ever loaded implicitly — resume only reads a file you name.
 On the model picker, `←`/`→` adjust the selected model's reasoning effort before the chat starts, `tab` toggles between the full view (descriptions, rates, provider headings) and a simple one-line-per-model view, and `esc` clears an active filter before it quits. Set `simple_picker = true` in the config to start in the simple view.
 
 The mouse wheel scrolls the conversation too; hold `shift` while dragging to select text, as usual in TUIs.
+
+Before a request is estimated to consume 90% or more of a known context
+window, Oolong pauses instead of silently truncating the conversation. You can
+send anyway, remove attachments, drop the oldest turn, or cancel while keeping
+the draft. The header labels token and cost figures as `reported` when they came
+from the provider and `estimated` when any part was calculated locally.
 
 > **Note:** `shift+enter` requires a terminal with keyboard enhancement support (Kitty, Ghostty, WezTerm, foot, …). `ctrl+j` works everywhere.
 

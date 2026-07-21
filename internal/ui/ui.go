@@ -90,11 +90,16 @@ type Model struct {
 	messages []chat.Message
 	// msgCache[i] is messages[i] rendered at cacheWidth. Completed messages
 	// render once; only the streaming message re-renders per delta.
-	msgCache       []string
-	cacheWidth     int
-	waiting        bool // a request is in flight
-	errText        string
-	newOutputBelow bool // streamed output arrived while the viewport was scrolled up
+	msgCache        []string
+	cacheWidth      int
+	waiting         bool // a request is in flight
+	errText         string
+	errorInfo       *chatErrorInfo
+	showErrorDetail bool
+	newOutputBelow  bool // streamed output arrived while the viewport was scrolled up
+	contextWarning  bool
+	contextPending  chat.Message
+	contextResend   bool // warning applies to retrying the latest user turn
 
 	// in-flight response stream (see stream.go)
 	stream        <-chan chat.StreamEvent
@@ -136,7 +141,8 @@ type Model struct {
 	inputTokens    int
 	outputTokens   int
 	costUSD        float64
-	estInputTokens int // estimated input tokens of the in-flight request
+	estInputTokens int  // estimated input tokens of the in-flight request
+	usageEstimated bool // session totals contain locally estimated usage
 
 	// API key manager. Inputs contain only newly typed values and are cleared
 	// immediately after a keychain save; stored secrets are never loaded here.

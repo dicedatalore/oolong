@@ -73,6 +73,8 @@ func (m *Model) resetChat() {
 	m.msgCache = nil
 	m.systemPrompt = ""
 	m.errText = ""
+	m.errorInfo = nil
+	m.showErrorDetail = false
 	m.chatNotice = ""
 	m.inputTokens = 0
 	m.outputTokens = 0
@@ -82,6 +84,11 @@ func (m *Model) resetChat() {
 	m.pickingFile = false
 	m.retryModel = false
 	m.newOutputBelow = false
+	m.contextWarning = false
+	m.contextPending = chat.Message{}
+	m.contextResend = false
+	m.contextResend = false
+	m.usageEstimated = false
 	m.clearEditLast()
 	m.clearRecall()
 }
@@ -115,11 +122,7 @@ func (m *Model) layoutChat() {
 		inputHeight++ // system prompt indicator line above the input
 	}
 	m.help.SetWidth(contentWidth - m.theme.bottomBar.GetHorizontalFrameSize())
-	helpHeight := 1
-	if m.help.ShowAll {
-		helpHeight = lipgloss.Height(m.help.View(m.keys))
-	}
-	bottomBarHeight := helpHeight + m.theme.bottomBar.GetVerticalFrameSize()
+	bottomBarHeight := lipgloss.Height(m.chatBottomBar()) + m.theme.bottomBar.GetVerticalFrameSize()
 	m.vp.SetWidth(contentWidth)
 	m.vp.SetHeight(contentHeight - headerHeight - inputHeight - bottomBarHeight)
 
@@ -226,6 +229,9 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateFilePicker(msg)
 	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
+		if m.contextWarning {
+			return m.updateContextWarning(key)
+		}
 		if m.editingSystem {
 			return m.updateSystemPrompt(key)
 		}
@@ -323,16 +329,10 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.waiting || len(m.messages) == 0 {
 				return m, nil
 			}
-			if m.messages[len(m.messages)-1].Role == "assistant" {
-				m.messages = m.messages[:len(m.messages)-1]
-			}
-			m.errText = ""
+			m.clearChatError()
 			m.chatNotice = ""
 			m.help.ShowAll = false
-			m.layoutChat()
-			m.vp.GotoBottom()
-			m.waiting = true
-			return m, tea.Batch(m.spin.Tick, m.startStream())
+			return m.beginResend()
 		case "ctrl+u":
 			if m.waiting || m.editIndex >= 0 {
 				return m, nil
@@ -351,6 +351,17 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.keyNotice = ""
 			m.sparkleTag++
 			return m, sparkleTick(m.sparkleTag)
+		case "ctrl+k":
+			if m.waiting {
+				return m, nil
+			}
+			return m, m.openKeyManager()
+		case "ctrl+i":
+			if m.errorInfo != nil {
+				m.showErrorDetail = !m.showErrorDetail
+				m.layoutChat()
+			}
+			return m, nil
 		case "ctrl+d":
 			if m.waiting {
 				return m, nil
@@ -368,12 +379,6 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingFiles = nil
 			m.chatNotice = "attachments cleared"
 			m.layoutChat()
-			return m, nil
-		case "ctrl+up":
-			m.jumpTurn(-1)
-			return m, nil
-		case "ctrl+down":
-			m.jumpTurn(+1)
 			return m, nil
 		case "up":
 			// With an empty composer, ↑ recalls the last sent message
@@ -431,7 +436,7 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.waiting {
 				return m, nil
 			}
-			m.errText = ""
+			m.clearChatError()
 			m.chatNotice = ""
 			m.help.ShowAll = false
 			cmd := m.openEditor()
@@ -451,7 +456,7 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.waiting {
 				return m, nil
 			}
-			m.errText = ""
+			m.clearChatError()
 			m.chatNotice = ""
 			m.help.ShowAll = false
 			m.layoutChat()
@@ -463,30 +468,18 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.waiting || (text == "" && len(m.pendingImages) == 0 && len(m.pendingFiles) == 0) {
 				return m, nil
 			}
-			m.errText = ""
+			m.clearChatError()
 			m.chatNotice = ""
 			m.help.ShowAll = false
 			message := chat.Message{Role: "user", Content: text, Images: m.pendingImages, Files: m.pendingFiles}
-			if m.editIndex >= 0 {
-				m.messages = m.messages[:m.editIndex]
-				m.msgCache = m.msgCache[:min(len(m.msgCache), m.editIndex)]
-				m.messages = append(m.messages, message)
-				m.input.SetValue(m.editSavedText)
-				m.pendingImages = m.editSavedImages
-				m.pendingFiles = m.editSavedFiles
-				m.clearEditLast()
-			} else {
-				m.messages = append(m.messages, message)
-				m.pendingImages = nil
-				m.pendingFiles = nil
-				m.input.SetValue("")
+			if pct, warn := m.contextWarningFor(message); warn {
+				m.contextWarning = true
+				m.contextPending = message
+				m.chatNotice = fmt.Sprintf("estimated context %d%% full", pct)
+				m.layoutChat()
+				return m, nil
 			}
-			m.clearRecall()
-			m.layoutChat()
-			m.vp.SetContent(m.conversationView())
-			m.vp.GotoBottom()
-			m.waiting = true
-			return m, tea.Batch(m.spin.Tick, m.startStream())
+			return m.commitMessage(message)
 		case "pgup", "pgdown":
 			var cmd tea.Cmd
 			m.vp, cmd = m.vp.Update(msg)
@@ -522,6 +515,137 @@ func (m Model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
+}
+
+func (m Model) commitMessage(message chat.Message) (tea.Model, tea.Cmd) {
+	if m.editIndex >= 0 {
+		m.messages = m.messages[:m.editIndex]
+		m.msgCache = m.msgCache[:min(len(m.msgCache), m.editIndex)]
+		m.messages = append(m.messages, message)
+		m.input.SetValue(m.editSavedText)
+		m.pendingImages = m.editSavedImages
+		m.pendingFiles = m.editSavedFiles
+		m.clearEditLast()
+	} else {
+		m.messages = append(m.messages, message)
+		m.pendingImages = nil
+		m.pendingFiles = nil
+		m.input.SetValue("")
+	}
+	m.contextWarning = false
+	m.contextPending = chat.Message{}
+	m.clearRecall()
+	m.layoutChat()
+	m.vp.SetContent(m.conversationView())
+	m.vp.GotoBottom()
+	m.waiting = true
+	return m, tea.Batch(m.spin.Tick, m.startStream())
+}
+
+func (m Model) updateContextWarning(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		m.contextWarning = false
+		m.contextPending = chat.Message{}
+		m.contextResend = false
+		m.chatNotice = "send cancelled — draft kept"
+		m.layoutChat()
+		return m, nil
+	case "s":
+		if m.contextResend {
+			return m.commitResend()
+		}
+		message := m.contextPending
+		m.chatNotice = "sending despite context warning"
+		return m.commitMessage(message)
+	case "a":
+		if m.contextResend {
+			idx := m.prevUserMessage(len(m.messages))
+			if idx < 0 || (len(m.messages[idx].Images) == 0 && len(m.messages[idx].Files) == 0) {
+				m.chatNotice = "no attachments to remove"
+				return m, nil
+			}
+			m.messages[idx].Images = nil
+			m.messages[idx].Files = nil
+			m.msgCache = m.msgCache[:min(len(m.msgCache), idx)]
+			m.chatNotice = "attachments removed — review the estimate or press s to retry"
+			m.layoutChat()
+			return m, nil
+		}
+		if len(m.contextPending.Images) == 0 && len(m.contextPending.Files) == 0 {
+			m.chatNotice = "no attachments to remove"
+			return m, nil
+		}
+		m.contextPending.Images = nil
+		m.contextPending.Files = nil
+		m.pendingImages = nil
+		m.pendingFiles = nil
+		m.chatNotice = "attachments removed — review the estimate or press s to send"
+		m.layoutChat()
+		return m, nil
+	case "d":
+		if m.dropOldestTurn() {
+			pct := m.contextWarningPercent()
+			m.chatNotice = fmt.Sprintf("oldest turn removed — estimated context %d%% full", pct)
+		} else {
+			m.chatNotice = "no older turn to remove"
+		}
+		m.layoutChat()
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) beginResend() (tea.Model, tea.Cmd) {
+	if pct, warn := m.resendContextWarning(); warn {
+		m.contextWarning = true
+		m.contextResend = true
+		m.contextPending = chat.Message{}
+		m.chatNotice = fmt.Sprintf("estimated context %d%% full", pct)
+		m.layoutChat()
+		return m, nil
+	}
+	return m.commitResend()
+}
+
+func (m Model) commitResend() (tea.Model, tea.Cmd) {
+	if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == "assistant" {
+		m.messages = m.messages[:len(m.messages)-1]
+		m.msgCache = m.msgCache[:min(len(m.msgCache), len(m.messages))]
+	}
+	m.contextWarning = false
+	m.contextResend = false
+	m.contextPending = chat.Message{}
+	m.layoutChat()
+	m.vp.GotoBottom()
+	m.waiting = true
+	return m, tea.Batch(m.spin.Tick, m.startStream())
+}
+
+func (m *Model) dropOldestTurn() bool {
+	cut := -1
+	for i := 1; i < len(m.messages); i++ {
+		if m.messages[i].Role == "user" {
+			cut = i
+			break
+		}
+	}
+	if cut < 0 || (m.editIndex >= 0 && cut > m.editIndex) {
+		return false
+	}
+	m.messages = m.messages[cut:]
+	m.msgCache = nil
+	if m.editIndex >= 0 {
+		m.editIndex -= cut
+	}
+	m.vp.SetContent(m.conversationView())
+	return true
+}
+
+func (m *Model) clearChatError() {
+	m.errText = ""
+	m.errorInfo = nil
+	m.showErrorDetail = false
 }
 
 // updateSystemPrompt handles keys while the input textarea is repurposed as
@@ -730,7 +854,7 @@ func (m *Model) startEditLast() bool {
 	m.input.SetValue(msg.Content)
 	m.pendingImages = slices.Clone(msg.Images)
 	m.pendingFiles = slices.Clone(msg.Files)
-	m.errText = ""
+	m.clearChatError()
 	m.chatNotice = "editing last prompt — enter regenerates • esc cancels"
 	m.layoutChat()
 	m.vp.GotoBottom()
@@ -764,51 +888,13 @@ func (m Model) retryLastWithModel(id string) (tea.Model, tea.Cmd) {
 	if len(m.messages) == 0 {
 		return m, focus
 	}
-	if m.messages[len(m.messages)-1].Role == "assistant" {
-		m.messages = m.messages[:len(m.messages)-1]
-		m.msgCache = m.msgCache[:min(len(m.msgCache), len(m.messages))]
-	}
 	if m.prevUserMessage(len(m.messages)) < 0 {
 		return m, focus
 	}
-	m.errText = ""
+	m.clearChatError()
 	m.chatNotice = "retrying with " + id
-	m.layoutChat()
-	m.vp.GotoBottom()
-	m.waiting = true
-	return m, tea.Batch(focus, m.spin.Tick, m.startStream())
-}
-
-// jumpTurn moves the viewport to the previous or next rendered message block.
-func (m *Model) jumpTurn(delta int) {
-	m.vp.SetContent(m.conversationView())
-	starts := make([]int, len(m.msgCache))
-	line := 0
-	for i, block := range m.msgCache {
-		starts[i] = line
-		line += lipgloss.Height(block)
-	}
-	current := m.vp.YOffset()
-	target := current
-	if delta > 0 {
-		for _, start := range starts {
-			if start > current {
-				target = start
-				break
-			}
-		}
-	} else {
-		for _, start := range starts {
-			if start >= current {
-				break
-			}
-			target = start
-		}
-	}
-	m.vp.SetYOffset(target)
-	if m.vp.AtBottom() {
-		m.newOutputBelow = false
-	}
+	retried, cmd := m.beginResend()
+	return retried, tea.Batch(focus, cmd)
 }
 
 // recallActive reports whether the composer holds an unedited recalled
@@ -910,8 +996,15 @@ func (m Model) chatHeader() string {
 			usd += float64(ein)/1e6*r.input + float64(eout)/1e6*r.output
 		}
 	}
-	cost := fmt.Sprintf("~$%.4f • %s in / %s out",
-		usd, formatTokens(in), formatTokens(out))
+	source := "usage"
+	if in > 0 || out > 0 {
+		source = "reported"
+	}
+	if m.waiting || m.usageEstimated {
+		source = "estimated"
+	}
+	cost := fmt.Sprintf("%s • ~$%.4f • %s in / %s out",
+		source, usd, formatTokens(in), formatTokens(out))
 	if eff := m.modelConfig(m.chosen).ReasoningEffort; eff != "" {
 		cost += " • effort: " + eff
 	}
@@ -954,7 +1047,22 @@ func (m Model) chatComposer(contentWidth int) string {
 // bar into the full chat page.
 func (m Model) viewChat() string {
 	header := m.chatHeader()
+	bottomBar := m.theme.bottomBar.Render(m.chatBottomBar())
 
+	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
+	inputArea := m.chatComposer(contentWidth)
+
+	// The attach-file picker overlays the conversation area.
+	body := m.vp.View()
+	if m.pickingFile {
+		body = lipgloss.NewStyle().Height(m.vp.Height()).MaxHeight(m.vp.Height()).Render(
+			m.theme.inputRow.Render(m.theme.botLabel.Render("Attach a file")) + "\n" + m.filePicker.View())
+	}
+	return m.theme.page.Render(header + "\n" + body + "\n" +
+		inputArea + "\n" + bottomBar)
+}
+
+func (m Model) chatBottomBar() string {
 	// The bottom bar shows one thing at a time, in order of urgency:
 	// error > spinner > notice > picker/system prompt hints > key help.
 	bottomBar := m.help.View(m.keys)
@@ -966,6 +1074,11 @@ func (m Model) viewChat() string {
 	}
 	if m.chatNotice != "" {
 		bottomBar = m.theme.help.Render(m.chatNotice)
+	}
+	if m.contextWarning {
+		pct := m.contextWarningPercent()
+		bottomBar = m.theme.err.Render(fmt.Sprintf("estimated context %d%% full", pct)) +
+			m.theme.help.Render(" — s send anyway • d drop oldest • a remove attachments • esc cancel")
 	}
 	if m.waiting {
 		label := " thinking…"
@@ -979,20 +1092,14 @@ func (m Model) viewChat() string {
 	} else if m.newOutputBelow {
 		bottomBar = m.theme.notice.Render("new output below — end to jump to latest")
 	}
-	if m.errText != "" {
+	if m.errorInfo != nil {
+		bottomBar = m.theme.err.Render(m.errorInfo.summary) +
+			m.theme.help.Render(" — "+m.errorInfo.hint+" • ctrl+i details")
+		if m.showErrorDetail {
+			bottomBar += "\n" + m.theme.help.Render(m.errorInfo.detail+" • ctrl+i hide details")
+		}
+	} else if m.errText != "" {
 		bottomBar = m.theme.err.Render("error: " + m.errText)
 	}
-	bottomBar = m.theme.bottomBar.Render(bottomBar)
-
-	contentWidth := m.width - m.theme.page.GetHorizontalFrameSize()
-	inputArea := m.chatComposer(contentWidth)
-
-	// The attach-file picker overlays the conversation area.
-	body := m.vp.View()
-	if m.pickingFile {
-		body = lipgloss.NewStyle().Height(m.vp.Height()).MaxHeight(m.vp.Height()).Render(
-			m.theme.inputRow.Render(m.theme.botLabel.Render("Attach a file")) + "\n" + m.filePicker.View())
-	}
-	return m.theme.page.Render(header + "\n" + body + "\n" +
-		inputArea + "\n" + bottomBar)
+	return bottomBar
 }

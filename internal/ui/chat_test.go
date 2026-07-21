@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -783,7 +784,7 @@ func TestPendingAttachmentsCanBeRemovedAndCleared(t *testing.T) {
 	}
 }
 
-func TestTurnNavigationAndNewOutputIndicator(t *testing.T) {
+func TestNewOutputIndicator(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()
 	am := enterChat(t, srv).(Model)
@@ -794,25 +795,12 @@ func TestTurnNavigationAndNewOutputIndicator(t *testing.T) {
 	}
 	am.layoutChat()
 	am.vp.GotoTop()
-	start := am.vp.YOffset()
-	var model tea.Model = am
-	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
-	am = model.(Model)
-	if am.vp.YOffset() <= start {
-		t.Error("ctrl+down did not jump to the next turn")
-	}
-	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
-	am = model.(Model)
-	if am.vp.YOffset() != start {
-		t.Errorf("ctrl+up offset=%d, want %d", am.vp.YOffset(), start)
-	}
-
 	am.vp.GotoTop()
 	am.waiting = true
 	am.streaming = false
 	ch := make(chan chat.StreamEvent)
 	am.stream = ch
-	model, _ = am.handleStreamEvent(streamEventMsg{StreamEvent: chat.StreamEvent{Delta: "new"}, ch: ch})
+	model, _ := am.handleStreamEvent(streamEventMsg{StreamEvent: chat.StreamEvent{Delta: "new"}, ch: ch})
 	am = model.(Model)
 	if !am.newOutputBelow || !strings.Contains(am.viewChat(), "new output below") {
 		t.Error("streaming while scrolled up did not show the new-output indicator")
@@ -823,6 +811,119 @@ func TestTurnNavigationAndNewOutputIndicator(t *testing.T) {
 		t.Error("end did not clear the new-output indicator")
 	}
 	am.finishStream()
+}
+
+func TestContextPreflightKeepsDraftAndRequiresAChoice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	cfg := config.Config{Provider: "openai", Models: []config.Model{{ID: "tiny", ContextWindow: 10}}}
+	var model tea.Model = New(clientFor(srv), "dark", cfg, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 28})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = typeText(model, strings.Repeat("x", 40))
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	am := model.(Model)
+	if !am.contextWarning || am.waiting || len(am.messages) != 0 {
+		t.Fatalf("preflight warning=%v waiting=%v messages=%d", am.contextWarning, am.waiting, len(am.messages))
+	}
+	if !strings.Contains(am.viewChat(), "send anyway") || !strings.Contains(am.viewChat(), "drop oldest") {
+		t.Error("context warning does not show recovery choices")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	am = model.(Model)
+	if am.contextWarning || am.input.Value() != strings.Repeat("x", 40) {
+		t.Errorf("cancel lost draft: warning=%v input=%q", am.contextWarning, am.input.Value())
+	}
+
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = model.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	am = model.(Model)
+	if am.contextWarning || !am.waiting || len(am.messages) != 1 {
+		t.Errorf("send-anyway warning=%v waiting=%v messages=%d", am.contextWarning, am.waiting, len(am.messages))
+	}
+	am.finishStream()
+}
+
+func TestContextPreflightCanRemoveAttachmentsAndOldestTurn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	cfg := config.Config{Provider: "openai", Models: []config.Model{{ID: "tiny", ContextWindow: 100}}}
+	var model tea.Model = New(clientFor(srv), "dark", cfg, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 28})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	am := model.(Model)
+	am.messages = []chat.Message{
+		{Role: "user", Content: strings.Repeat("old", 100)},
+		{Role: "assistant", Content: strings.Repeat("reply", 100)},
+		{Role: "user", Content: "newer"},
+		{Role: "assistant", Content: "response"},
+	}
+	am.pendingImages = [][]byte{{1, 2, 3}}
+	am.input.SetValue("next")
+	am.layoutChat()
+	model = am
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !model.(Model).contextWarning {
+		t.Fatal("large history did not trigger preflight")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	am = model.(Model)
+	if len(am.pendingImages) != 0 || len(am.contextPending.Images) != 0 {
+		t.Error("remove-attachments choice kept image data")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	am = model.(Model)
+	if len(am.messages) != 2 || am.messages[0].Content != "newer" {
+		t.Errorf("drop-oldest left messages %#v", am.messages)
+	}
+}
+
+func TestRegenerateUsesContextPreflightBeforeDroppingReply(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	cfg := config.Config{Provider: "openai", Models: []config.Model{{ID: "tiny", ContextWindow: 10}}}
+	var model tea.Model = New(clientFor(srv), "dark", cfg, "")
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 28})
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	am := model.(Model)
+	am.messages = []chat.Message{
+		{Role: "user", Content: strings.Repeat("x", 40)},
+		{Role: "assistant", Content: "keep until confirmed"},
+	}
+	am.layoutChat()
+	model = am
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	am = model.(Model)
+	if !am.contextWarning || !am.contextResend || len(am.messages) != 2 || am.waiting {
+		t.Fatalf("regen preflight warning=%v resend=%v messages=%d waiting=%v", am.contextWarning, am.contextResend, len(am.messages), am.waiting)
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	am = model.(Model)
+	if len(am.messages) != 2 || am.messages[1].Content != "keep until confirmed" {
+		t.Error("cancelling regenerate discarded the existing reply")
+	}
+}
+
+func TestErrorDetailsToggle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	am := enterChat(t, srv).(Model)
+	am.messages = []chat.Message{{Role: "user", Content: "hello"}}
+	am.waiting = true
+	am.estInputTokens = 2
+	ch := make(chan chat.StreamEvent)
+	am.stream = ch
+	var model tea.Model
+	model, _ = am.handleStreamEvent(streamEventMsg{StreamEvent: chat.StreamEvent{Err: errors.New("openai: HTTP 401 secret detail")}, ch: ch})
+	am = model.(Model)
+	if !strings.Contains(am.viewChat(), "Authentication failed") || strings.Contains(am.viewChat(), "secret detail") {
+		t.Error("error view did not hide technical detail initially")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'i', Mod: tea.ModCtrl})
+	am = model.(Model)
+	if !strings.Contains(am.viewChat(), "secret detail") {
+		t.Error("ctrl+i did not reveal error detail")
+	}
 }
 
 func TestContextMeterInHeader(t *testing.T) {

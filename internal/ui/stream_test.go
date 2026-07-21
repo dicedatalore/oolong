@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -118,13 +119,41 @@ func TestStreamErrorShowsMessage(t *testing.T) {
 	model = pumpStream(t, model)
 
 	am := model.(Model)
-	if am.errText != "openai: boom" {
-		t.Errorf("errText = %q, want %q", am.errText, "openai: boom")
+	if am.errText != "Request failed" || am.errorInfo == nil || am.errorInfo.detail != "openai: boom" {
+		t.Errorf("error state = %q / %#v", am.errText, am.errorInfo)
 	}
 	if am.waiting {
 		t.Error("still waiting after stream error")
 	}
 	if n := len(am.messages); n != 1 {
 		t.Errorf("len(messages) = %d, want 1 (no assistant message on error)", n)
+	}
+}
+
+func TestUsageSourceDistinguishesReportedAndEstimated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":7,\"output_tokens\":2}}}\n\n")
+	}))
+	defer srv.Close()
+	model := enterChat(t, srv)
+	model = typeText(model, "hello")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = pumpStream(t, model)
+	if header := model.(Model).chatHeader(); !strings.Contains(header, "reported") {
+		t.Errorf("reported usage header = %q", header)
+	}
+
+	am := model.(Model)
+	am.waiting = true
+	am.estInputTokens = 12
+	am.streaming = true
+	am.messages = append(am.messages, chat.Message{Role: "assistant", Content: "estimated output"})
+	ch := make(chan chat.StreamEvent)
+	am.stream = ch
+	model, _ = am.handleStreamEvent(streamEventMsg{StreamEvent: chat.StreamEvent{Done: true}, ch: ch})
+	am = model.(Model)
+	if !am.usageEstimated || !strings.Contains(am.chatHeader(), "estimated") {
+		t.Errorf("estimated usage not labelled: estimated=%v header=%q", am.usageEstimated, am.chatHeader())
 	}
 }

@@ -18,9 +18,9 @@ type chatKeyMap struct {
 	EditLast         key.Binding
 	RetryModel       key.Binding
 	Recall           key.Binding
-	Turns            key.Binding
 	RemoveAttachment key.Binding
 	ClearAttachments key.Binding
+	ErrorDetails     key.Binding
 	NewChat          key.Binding
 	Scroll           key.Binding
 	Jump             key.Binding
@@ -46,8 +46,9 @@ func (k chatKeyMap) FullHelp() [][]key.Binding {
 		{k.Send, k.NewLine, k.Paste},
 		{k.Attach, k.Editor, k.Copy},
 		{k.CopyCode, k.Regen, k.EditLast},
-		{k.RetryModel, k.Recall, k.Turns},
+		{k.RetryModel, k.Recall},
 		{k.RemoveAttachment, k.ClearAttachments},
+		{k.ErrorDetails},
 		{k.SysPrompt, k.Save, k.NewChat},
 		{k.Scroll, k.Jump, k.Stop},
 		{k.Back, k.Quit, k.Help},
@@ -67,9 +68,9 @@ func newChatKeyMap() chatKeyMap {
 		EditLast:         key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "edit last prompt")),
 		RetryModel:       key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("ctrl+t", "retry with model")),
 		Recall:           key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "message history")),
-		Turns:            key.NewBinding(key.WithKeys("ctrl+up", "ctrl+down"), key.WithHelp("ctrl+↑/↓", "jump turns")),
 		RemoveAttachment: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "remove attachment")),
 		ClearAttachments: key.NewBinding(key.WithKeys("alt+d"), key.WithHelp("alt+d", "clear attachments")),
+		ErrorDetails:     key.NewBinding(key.WithKeys("ctrl+i"), key.WithHelp("ctrl+i", "error details")),
 		NewChat:          key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "new chat")),
 		Scroll:           key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "scroll")),
 		Jump:             key.NewBinding(key.WithKeys("home", "end"), key.WithHelp("home/end", "top/bottom")),
