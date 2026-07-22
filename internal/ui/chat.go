@@ -6,14 +6,9 @@ package ui
 
 import (
 	"fmt"
-	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
-	"charm.land/bubbles/v2/filepicker"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -157,38 +152,6 @@ func (m *Model) layoutChat() {
 		// The picker overlays the viewport area, minus its title line.
 		m.filePicker.SetHeight(max(1, m.vp.Height()-1))
 	}
-}
-
-// conversationView renders the whole transcript: user messages in bordered
-// blocks, assistant messages as glamour-rendered markdown. Completed
-// messages come from msgCache, so the per-delta cost while streaming stays
-// constant instead of growing with the transcript.
-func (m *Model) conversationView() string {
-	if len(m.messages) == 0 {
-		return m.theme.help.Render("\n  Say something to get started.")
-	}
-	// The transcript can shrink (regenerate drops the last reply, ctrl+n
-	// clears it); stale tail entries must not survive.
-	if len(m.msgCache) > len(m.messages) {
-		m.msgCache = m.msgCache[:len(m.messages)]
-	}
-	for i := len(m.msgCache); i < len(m.messages); i++ {
-		m.msgCache = append(m.msgCache, m.renderMessageMode(m.messages[i], m.streaming && i == len(m.messages)-1))
-	}
-	if m.streaming {
-		last := len(m.messages) - 1
-		m.msgCache[last] = m.renderMessageMode(m.messages[last], true)
-	}
-	var b strings.Builder
-	for _, block := range m.msgCache {
-		b.WriteString(block)
-	}
-	return b.String()
-}
-
-// renderMessage renders one message to its on-screen block.
-func (m *Model) renderMessage(msg chat.Message) string {
-	return m.renderMessageMode(msg, false)
 }
 
 func (m *Model) renderMessageMode(msg chat.Message, live bool) string {
@@ -649,107 +612,6 @@ func (m *Model) clearChatError() {
 	m.showErrorDetail = false
 }
 
-// updateSystemPrompt handles keys while the input textarea is repurposed as
-// the system prompt editor: enter saves, esc cancels, and the stashed message
-// draft is restored either way.
-func (m Model) updateSystemPrompt(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc":
-		m.exitSystemPrompt()
-		return m, nil
-	case "enter":
-		m.systemPrompt = strings.TrimSpace(m.input.Value())
-		if m.systemPrompt == "" {
-			m.chatNotice = "system prompt cleared"
-		} else {
-			m.chatNotice = "system prompt set"
-		}
-		m.exitSystemPrompt()
-		return m, nil
-	}
-	var cmd tea.Cmd
-	prevHeight := m.input.Height()
-	m.input, cmd = m.input.Update(key)
-	if m.input.Height() != prevHeight {
-		m.layoutChat()
-	}
-	return m, cmd
-}
-
-func (m *Model) exitSystemPrompt() {
-	m.editingSystem = false
-	m.input.SetValue(m.draft)
-	m.draft = ""
-	m.input.Placeholder = "Send a message…"
-	m.help.ShowAll = false
-	m.layoutChat()
-}
-
-// newFilePicker builds the attach-file picker, starting in the working
-// directory.
-func newFilePicker(height int, theme theme) filepicker.Model {
-	fp := filepicker.New()
-	if dir, err := os.Getwd(); err == nil {
-		fp.CurrentDirectory = dir
-	}
-	fp.AutoHeight = false
-	fp.SetHeight(height)
-	// esc must cancel the picker (handled in updateFilePicker), not walk up
-	// a directory.
-	fp.KeyMap.Back = key.NewBinding(key.WithKeys("h", "backspace", "left"), key.WithHelp("h", "back"))
-	fp.Styles.Cursor = fp.Styles.Cursor.Foreground(theme.accent)
-	fp.Styles.Selected = fp.Styles.Selected.Foreground(theme.accent).Bold(true)
-	return fp
-}
-
-// updateFilePicker routes messages while the attach-file picker overlays the
-// conversation: esc cancels, choosing a file loads it as an attachment.
-func (m Model) updateFilePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "esc" {
-		m.pickingFile = false
-		m.layoutChat()
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.filePicker, cmd = m.filePicker.Update(msg)
-	if ok, path := m.filePicker.DidSelectFile(msg); ok {
-		m.pickingFile = false
-		m.attachPath(path)
-		m.layoutChat()
-	}
-	return m, cmd
-}
-
-// attachPath loads a file from disk as an attachment: images join the
-// pending images, anything that reads as text becomes a pending file block.
-func (m *Model) attachPath(path string) {
-	// Past ~a megabyte a text file wouldn't fit a context window anyway,
-	// and images meet API limits long before this.
-	const maxAttachment = 20 << 20
-	if info, err := os.Stat(path); err == nil && info.Size() > maxAttachment {
-		m.chatNotice = filepath.Base(path) + " is too large to attach (20MB max)"
-		return
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		m.errText = "attach: " + err.Error()
-		return
-	}
-	name := filepath.Base(path)
-	switch mime := http.DetectContentType(data); mime {
-	case "image/png", "image/jpeg", "image/gif", "image/webp":
-		m.pendingImages = append(m.pendingImages, data)
-		m.chatNotice = "attached " + name
-	default:
-		if !utf8.Valid(data) {
-			m.chatNotice = name + " is neither an image nor text"
-			return
-		}
-		m.pendingFiles = append(m.pendingFiles, chat.File{Name: name, Text: string(data)})
-		m.chatNotice = "attached " + name
-	}
-}
-
 // attachmentLabel describes the pending attachments in one line; "" when
 // there are none.
 func (m Model) attachmentItems() []string {
@@ -761,10 +623,6 @@ func (m Model) attachmentItems() []string {
 		items = append(items, "📄 "+f.Name)
 	}
 	return items
-}
-
-func (m Model) attachmentLabel() string {
-	return strings.Join(m.attachmentItems(), " • ")
 }
 
 func (m *Model) removeLastAttachment() (string, bool) {
@@ -834,91 +692,6 @@ func (m Model) retryLastWithModel(id string) (tea.Model, tea.Cmd) {
 	m.chatNotice = "retrying with " + id
 	retried, cmd := m.beginResend()
 	return retried, tea.Batch(focus, cmd)
-}
-
-// recallActive reports whether the composer holds an unedited recalled
-// message. Any edit makes the value differ from recallText, which drops the
-// composer out of history stepping without needing an explicit reset.
-func (m Model) recallActive() bool {
-	return m.recallIdx >= 0 && m.input.Value() == m.recallText
-}
-
-// recallMessage loads the sent message at idx into the composer, including
-// its attachments.
-func (m *Model) recallMessage(idx int) {
-	msg := m.messages[idx]
-	m.recallIdx = idx
-	m.recallText = msg.Content
-	m.input.SetValue(msg.Content)
-	m.pendingImages = slices.Clone(msg.Images)
-	m.pendingFiles = slices.Clone(msg.Files)
-	m.layoutChat()
-	m.vp.GotoBottom()
-}
-
-// exitRecall restores the composer to the state before recall started: empty
-// text, plus any attachments that were already pending.
-func (m *Model) exitRecall() {
-	m.input.SetValue("")
-	m.pendingImages = m.recallSavedImages
-	m.pendingFiles = m.recallSavedFiles
-	m.clearRecall()
-	m.layoutChat()
-	m.vp.GotoBottom()
-}
-
-func (m *Model) clearRecall() {
-	m.recallIdx = -1
-	m.recallText = ""
-	m.recallSavedImages = nil
-	m.recallSavedFiles = nil
-}
-
-// prevUserMessage returns the index of the last user message before i, -1
-// when there is none.
-func (m Model) prevUserMessage(i int) int {
-	for i--; i >= 0; i-- {
-		if m.messages[i].Role == "user" {
-			return i
-		}
-	}
-	return -1
-}
-
-// nextUserMessage returns the index of the first user message after i, -1
-// when there is none.
-func (m Model) nextUserMessage(i int) int {
-	for i++; i < len(m.messages); i++ {
-		if m.messages[i].Role == "user" {
-			return i
-		}
-	}
-	return -1
-}
-
-// lastMessage returns the content of the most recent message with the
-// given role.
-func (m Model) lastMessage(role string) (string, bool) {
-	for i := len(m.messages) - 1; i >= 0; i-- {
-		if m.messages[i].Role == role {
-			return m.messages[i].Content, true
-		}
-	}
-	return "", false
-}
-
-func imageLabel(n int) string {
-	if n == 1 {
-		return "📎 1 image"
-	}
-	return fmt.Sprintf("📎 %d images", n)
-}
-
-func formatTokens(n int) string {
-	if n < 1000 {
-		return fmt.Sprintf("%d", n)
-	}
-	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
 // chatHeader keeps the model and its quieter session metadata together in a
@@ -1020,26 +793,6 @@ func (m Model) responsePlaceholder() string {
 		placeholder += " • new output below — end to follow"
 	}
 	return placeholder
-}
-
-// viewChat stacks the header, conversation viewport, input area, and bottom
-// bar into the full chat page.
-func (m Model) viewChat() string {
-	header := m.chatHeader()
-
-	page := m.pageStyle()
-	contentWidth := max(1, m.width-page.GetHorizontalFrameSize())
-	inputArea := m.chatComposer(contentWidth)
-	bottomBar := m.theme.bottomBar.Render(centeredBar(contentWidth, m.chatBottomBar()))
-
-	// The attach-file picker overlays the conversation area.
-	body := m.vp.View()
-	if m.pickingFile {
-		body = lipgloss.NewStyle().Height(m.vp.Height()).MaxHeight(m.vp.Height()).Render(
-			m.theme.inputRow.Render(m.theme.botLabel.Render("Attach a file")) + "\n" + m.filePicker.View())
-	}
-	return page.Render(header + "\n" + body + "\n" +
-		inputArea + "\n" + bottomBar)
 }
 
 func (m Model) chatBottomBar() string {
