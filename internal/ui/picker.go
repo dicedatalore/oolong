@@ -93,7 +93,7 @@ func pickerAdditionalHelp(hasModels, simple bool) func() []key.Binding {
 		bindings := make([]key.Binding, 0, 3)
 		if hasModels {
 			bindings = append(bindings,
-				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "reasoning effort")))
+				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "effort")))
 		}
 		viewLabel := "simple view"
 		if simple {

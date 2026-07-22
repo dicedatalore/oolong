@@ -17,6 +17,7 @@ import (
 
 func TestGeminiFakeMatchesSDK(t *testing.T) {
 	t.Setenv("REPLY_FILE", "")
+	t.Setenv("GEMINI_REPLY_FILE", "")
 	t.Setenv("REPLY_DELAY_MS", "0")
 	logPath := t.TempDir() + "/gemini.log"
 	t.Setenv("GEMINI_REQLOG", logPath)
@@ -58,6 +59,7 @@ func TestGeminiFakeMatchesSDK(t *testing.T) {
 
 func TestOllamaFakeMatchesClient(t *testing.T) {
 	t.Setenv("REPLY_FILE", "")
+	t.Setenv("OLLAMA_REPLY_FILE", "")
 	t.Setenv("REPLY_DELAY_MS", "0")
 	logPath := t.TempDir() + "/ollama.log"
 	t.Setenv("OLLAMA_REQLOG", logPath)
@@ -103,8 +105,31 @@ func TestFakeRejectsKnownBadKey(t *testing.T) {
 	}
 }
 
+func TestReplyChunksPrefersProviderFile(t *testing.T) {
+	dir := t.TempDir()
+	fallback := dir + "/fallback.md"
+	provider := dir + "/provider.md"
+	if err := os.WriteFile(fallback, []byte("shared reply"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(provider, []byte("provider reply"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REPLY_FILE", fallback)
+	t.Setenv("TEST_PROVIDER_REPLY_FILE", provider)
+
+	if got := strings.Join(replyChunks("TEST_PROVIDER_REPLY_FILE"), ""); got != "provider reply" {
+		t.Fatalf("provider reply = %q", got)
+	}
+	t.Setenv("TEST_PROVIDER_REPLY_FILE", "")
+	if got := strings.Join(replyChunks("TEST_PROVIDER_REPLY_FILE"), ""); got != "shared reply" {
+		t.Fatalf("fallback reply = %q", got)
+	}
+}
+
 func TestAnthropicFakeMatchesSDK(t *testing.T) {
 	t.Setenv("REPLY_FILE", "")
+	t.Setenv("ANTHROPIC_REPLY_FILE", "")
 	t.Setenv("REPLY_DELAY_MS", "0")
 	logPath := t.TempDir() + "/anthropic.log"
 	t.Setenv("ANTHROPIC_REQLOG", logPath)

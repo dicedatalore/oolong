@@ -28,7 +28,9 @@ CGO_ENABLED=0 go build \
 go build -o "$TMP/fakeapi" ./e2e/fakeapi
 
 echo "== start fake API"
-REPLY_FILE="$PWD/demo/reply.md" REPLY_DELAY_MS=40 \
+ANTHROPIC_REPLY_FILE="$PWD/demo/reply.md" \
+OPENAI_REPLY_FILE="$PWD/demo/reply-openai.md" \
+REPLY_DELAY_MS=35 \
     "$TMP/fakeapi" 127.0.0.1:0 > "$TMP/fakeapi.out" &
 FAKEAPI_PID=$!
 ADDR=""
@@ -56,13 +58,15 @@ export TERM=xterm-256color
 export COLORTERM=truecolor
 
 # Keep the demo catalog compact while showing provider-aware routing. The
-# tape selects Claude, whose native Messages API is served by fakeapi.
+# tape starts with Claude, then keeps the conversation while switching to
+# OpenAI; fakeapi gives each native endpoint its own deterministic reply.
 mkdir -p "$XDG_CONFIG_HOME/oolong"
 cat > "$XDG_CONFIG_HOME/oolong/config.toml" <<EOF
 [[models]]
 id = "gpt-5.6-luna"
 provider = "openai"
 description = "Fast OpenAI model"
+base_url = "http://$ADDR/v1"
 
 [[models]]
 id = "claude-sonnet-5"
@@ -71,9 +75,9 @@ description = "Frontier intelligence at scale"
 base_url = "http://$ADDR"
 
 [[models]]
-id = "gemini-3.5-flash"
-provider = "google"
-description = "Fast, capable everyday model"
+id = "gemma4:31b"
+provider = "ollama"
+description = "Frontier-level performance"
 EOF
 
 echo "== record"

@@ -8,9 +8,13 @@
 //	ANTHROPIC_REQLOG   append each /v1/messages request body to this file
 //	GEMINI_REQLOG      append each streamGenerateContent request body to this file
 //	OLLAMA_REQLOG      append each /api/chat request body to this file
-//	REPLY_FILE     stream this file's text instead of the built-in chunks
-//	REPLY_DELAY_MS delay between streamed words (default 0; the demo uses
-//	               ~40 to look like a real model thinking)
+//	REPLY_FILE           stream this file's text instead of the built-in chunks
+//	OPENAI_REPLY_FILE    override REPLY_FILE for OpenAI responses
+//	ANTHROPIC_REPLY_FILE override REPLY_FILE for Anthropic responses
+//	GEMINI_REPLY_FILE    override REPLY_FILE for Gemini responses
+//	OLLAMA_REPLY_FILE    override REPLY_FILE for Ollama responses
+//	REPLY_DELAY_MS       delay between streamed words (default 0; the demo uses
+//	                     ~40 to look like a real model thinking)
 //
 // It listens on the address in os.Args[1] (use 127.0.0.1:0 for a free
 // port) and prints "listening on <addr>" once ready, so callers can parse
@@ -75,7 +79,7 @@ func ollamaChat(w http.ResponseWriter, r *http.Request) {
 	logRequest("OLLAMA_REQLOG", body)
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	fl := w.(http.Flusher)
-	for _, part := range replyChunks() {
+	for _, part := range replyChunks("OLLAMA_REPLY_FILE") {
 		fmt.Fprintf(w, "{\"message\":{\"role\":\"assistant\",\"content\":%s},\"done\":false}\n", strconv.Quote(part))
 		fl.Flush()
 		time.Sleep(replyDelay())
@@ -94,7 +98,7 @@ func responses(w http.ResponseWriter, r *http.Request) {
 	if ms, err := strconv.Atoi(os.Getenv("REPLY_DELAY_MS")); err == nil {
 		delay = time.Duration(ms) * time.Millisecond
 	}
-	for _, chunk := range replyChunks() {
+	for _, chunk := range replyChunks("OPENAI_REPLY_FILE") {
 		fmt.Fprintf(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":%s}\n\n", strconv.Quote(chunk))
 		fl.Flush()
 		time.Sleep(delay)
@@ -110,7 +114,7 @@ func messages(w http.ResponseWriter, r *http.Request) {
 	fl := w.(http.Flusher)
 	fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10}}}\n\n")
 	fl.Flush()
-	for _, chunk := range replyChunks() {
+	for _, chunk := range replyChunks("ANTHROPIC_REPLY_FILE") {
 		fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%s}}\n\n", strconv.Quote(chunk))
 		fl.Flush()
 		time.Sleep(replyDelay())
@@ -126,7 +130,7 @@ func generateContent(w http.ResponseWriter, r *http.Request) {
 	logRequest("GEMINI_REQLOG", body)
 	w.Header().Set("Content-Type", "text/event-stream")
 	fl := w.(http.Flusher)
-	for _, chunk := range replyChunks() {
+	for _, chunk := range replyChunks("GEMINI_REPLY_FILE") {
 		fmt.Fprintf(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":%s}],\"role\":\"model\"}}],\"usageMetadata\":{\"promptTokenCount\":10}}\n\n", strconv.Quote(chunk))
 		fl.Flush()
 		time.Sleep(replyDelay())
@@ -153,11 +157,14 @@ func replyDelay() time.Duration {
 	return 0
 }
 
-// replyChunks returns the reply as streamable deltas: REPLY_FILE split into
-// word-sized chunks (whitespace kept, so the text reassembles exactly), or
-// the built-in canned chunks.
-func replyChunks() []string {
-	path := os.Getenv("REPLY_FILE")
+// replyChunks returns the reply as streamable deltas. A provider-specific
+// file wins over REPLY_FILE; either is split into word-sized chunks with
+// whitespace retained so the text reassembles exactly.
+func replyChunks(providerEnv string) []string {
+	path := os.Getenv(providerEnv)
+	if path == "" {
+		path = os.Getenv("REPLY_FILE")
+	}
 	if path == "" {
 		return []string{"fake ", "reply ", "done"}
 	}

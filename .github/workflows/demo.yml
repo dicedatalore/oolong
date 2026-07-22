@@ -37,10 +37,7 @@ jobs:
       - name: Install VHS and its dependencies
         run: |
           sudo apt-get update
-          # fonts-noto-cjk: the demo reply contains CJK text (乌龙茶) and
-          # JetBrains Mono has no CJK glyphs; the browser VHS records
-          # through falls back to Noto for them.
-          sudo apt-get install -y ffmpeg fonts-jetbrains-mono fonts-noto-cjk
+          sudo apt-get install -y ffmpeg fonts-jetbrains-mono
           curl -fsSL -o /tmp/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
           sudo install /tmp/ttyd /usr/local/bin/ttyd
           go install github.com/charmbracelet/vhs@latest
