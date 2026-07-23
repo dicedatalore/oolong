@@ -17,6 +17,7 @@ import (
 
 	"github.com/dicedatalore/oolong/internal/clipboard"
 	"github.com/dicedatalore/oolong/internal/config"
+	"github.com/dicedatalore/oolong/internal/doctor"
 	"github.com/dicedatalore/oolong/internal/keystore"
 	"github.com/dicedatalore/oolong/internal/oneshot"
 	"github.com/dicedatalore/oolong/internal/provider"
@@ -138,7 +139,7 @@ Flags:
 		cfgNotice = cfgErr.Error()
 	}
 	if len(args) == 1 && args[0] == "doctor" {
-		return runDoctor(deps.stdout, cfg, cfgErr, resolver, deps.keyStatus, deps.clipboardSupported)
+		return doctor.Run(deps.stdout, cfg, cfgErr, resolver, deps.keyStatus, deps.clipboardSupported)
 	}
 
 	// Positional arguments (or piped stdin) mean one-shot mode: stream the

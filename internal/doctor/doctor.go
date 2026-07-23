@@ -1,4 +1,5 @@
-package main
+// Package doctor reports Oolong's local configuration and capability state.
+package doctor
 
 import (
 	"fmt"
@@ -12,9 +13,9 @@ import (
 	"github.com/dicedatalore/oolong/internal/version"
 )
 
-// runDoctor reports local configuration and capability state. It deliberately
-// performs no provider requests and never reads or prints secret values.
-func runDoctor(out io.Writer, cfg config.Config, cfgErr error, resolver *provider.Resolver,
+// Run reports local state without making provider requests or reading secret
+// values.
+func Run(out io.Writer, cfg config.Config, cfgErr error, resolver *provider.Resolver,
 	keyStatus func(keystore.Provider) string, clipboardSupported func() bool,
 ) int {
 	fmt.Fprintln(out, "Oolong "+version.String())
