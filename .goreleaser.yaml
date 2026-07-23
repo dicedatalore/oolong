@@ -58,7 +58,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/dicedatalore/oolong
-    description: Simple ephemeral chat with OpenAI models in your terminal
+    description: Simple ephemeral chat. Converse with models in your terminal
     license: MIT
     # The binaries are not notarized, so clear the quarantine flag on install.
     hooks:
@@ -67,3 +67,16 @@ homebrew_casks:
           if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/oolong"]
           end
+
+scoops:
+  - name: oolong
+    # Publishing needs the dicedatalore/scoop-bucket repo to exist and a
+    # SCOOP_GITHUB_TOKEN repo secret (fine-grained PAT with Contents
+    # read/write on the bucket); the release workflow passes it through.
+    repository:
+      owner: dicedatalore
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_GITHUB_TOKEN }}"
+    homepage: https://github.com/dicedatalore/oolong
+    description: Simple ephemeral chat. Converse with models in your terminal
+    license: MIT

@@ -20,6 +20,14 @@ brew install --cask dicedatalore/tap/oolong
 oolong
 ```
 
+On Windows with Scoop:
+
+```powershell
+scoop bucket add dicedatalore https://github.com/dicedatalore/scoop-bucket.git
+scoop install dicedatalore/oolong
+oolong
+```
+
 Or install with Go on macOS, Linux, or Windows:
 
 ```sh
